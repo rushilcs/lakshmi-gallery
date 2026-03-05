@@ -1,0 +1,144 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # ─── Checkout ───
+      - uses: actions/checkout@v4
+
+      # ─── Configure AWS via OIDC ───
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ─── Login to ECR ───
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ─── Build + push backend Docker image ───
+      - name: Build and push backend image
+        working-directory: server
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'lakshmi-gallery-backend' }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+      # ─── CDK deploy ───
+      - name: Install CDK dependencies
+        working-directory: infra
+        run: npm ci
+
+      - name: CDK deploy
+        working-directory: infra
+        run: npx cdk deploy --all --require-approval never --outputs-file cdk-outputs.json
+
+      - name: Extract CDK outputs
+        id: cdk
+        working-directory: infra
+        run: |
+          STACK=$(jq -r 'keys[0]' cdk-outputs.json)
+          echo "cluster=$(jq -r ".[\"$STACK\"].ClusterName" cdk-outputs.json)" >> $GITHUB_OUTPUT
+          echo "api_service=$(jq -r ".[\"$STACK\"].ApiServiceName" cdk-outputs.json)" >> $GITHUB_OUTPUT
+          echo "worker_service=$(jq -r ".[\"$STACK\"].WorkerServiceName" cdk-outputs.json)" >> $GITHUB_OUTPUT
+          echo "migrate_task_arn=$(jq -r ".[\"$STACK\"].MigrateTaskDefArn" cdk-outputs.json)" >> $GITHUB_OUTPUT
+          echo "subnets=$(jq -r ".[\"$STACK\"].PrivateSubnets" cdk-outputs.json)" >> $GITHUB_OUTPUT
+          echo "sg=$(jq -r ".[\"$STACK\"].EcsSecurityGroup" cdk-outputs.json)" >> $GITHUB_OUTPUT
+          echo "frontend_bucket=$(jq -r ".[\"$STACK\"].FrontendBucketName" cdk-outputs.json)" >> $GITHUB_OUTPUT
+          echo "frontend_dist_id=$(jq -r ".[\"$STACK\"].FrontendCfDistId" cdk-outputs.json)" >> $GITHUB_OUTPUT
+          echo "media_dist_id=$(jq -r ".[\"$STACK\"].MediaCfDistId" cdk-outputs.json)" >> $GITHUB_OUTPUT
+          echo "alb_dns=$(jq -r ".[\"$STACK\"].AlbDns" cdk-outputs.json)" >> $GITHUB_OUTPUT
+
+      # ─── Run migrations as one-off ECS task ───
+      - name: Run database migrations
+        env:
+          CLUSTER: ${{ steps.cdk.outputs.cluster }}
+          TASK_DEF: ${{ steps.cdk.outputs.migrate_task_arn }}
+          SUBNETS: ${{ steps.cdk.outputs.subnets }}
+          SG: ${{ steps.cdk.outputs.sg }}
+        run: |
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$CLUSTER" \
+            --task-definition "$TASK_DEF" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$(echo $SUBNETS | tr ',' ',')],securityGroups=[$SG],assignPublicIp=DISABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+
+          echo "Migration task: $TASK_ARN"
+
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
+
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster "$CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+
+          echo "Migration exit code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "Migration failed!"
+            aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" --query 'tasks[0].stoppedReason' --output text
+            exit 1
+          fi
+
+      # ─── Force new deployment for API + Worker ───
+      - name: Deploy API service
+        run: |
+          aws ecs update-service \
+            --cluster "${{ steps.cdk.outputs.cluster }}" \
+            --service "${{ steps.cdk.outputs.api_service }}" \
+            --force-new-deployment \
+            --query 'service.serviceName' --output text
+
+      - name: Deploy Worker service
+        run: |
+          aws ecs update-service \
+            --cluster "${{ steps.cdk.outputs.cluster }}" \
+            --service "${{ steps.cdk.outputs.worker_service }}" \
+            --force-new-deployment \
+            --query 'service.serviceName' --output text
+
+      # ─── Build + deploy frontend ───
+      - name: Install frontend dependencies
+        working-directory: client
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: client
+        env:
+          VITE_API_BASE_URL: http://${{ steps.cdk.outputs.alb_dns }}/api
+        run: npm run build
+
+      - name: Upload frontend to S3
+        run: |
+          aws s3 sync client/dist/ s3://${{ steps.cdk.outputs.frontend_bucket }}/ \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "index.html" \
+            --exclude "*.json"
+          aws s3 cp client/dist/index.html s3://${{ steps.cdk.outputs.frontend_bucket }}/index.html \
+            --cache-control "public, max-age=0, must-revalidate"
+
+      # ─── Invalidate CloudFront ───
+      - name: Invalidate frontend CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ steps.cdk.outputs.frontend_dist_id }}" \
+            --paths "/*"
