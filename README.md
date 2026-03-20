@@ -60,7 +60,7 @@ Copy or export variables as needed; the server validates config at startup (`ser
    npm run dev
    ```
 
-   Vite proxies `/api` → `http://localhost:4000`. For a custom API base in production, set `VITE_API_BASE_URL` when building the client.
+   Vite proxies `/api` → the API server on port 4000. The client always uses same-origin **`/api`** (no hardcoded `http://` URLs) so admin login works over HTTPS in production; CloudFront forwards `/api/*` to the ALB (see `infra/lib/stack.ts`).
 
 ## Routes (client)
 
@@ -99,6 +99,12 @@ cd client && npm run build   # output: client/dist — serve behind your reverse
 ```
 
 Run the worker alongside the API in production (`npm run worker:prod` from compiled `server/`).
+
+## Deploying to AWS
+
+- **Full guide:** **[`DEPLOYMENT.md`](DEPLOYMENT.md)** — architecture, OIDC/GitHub setup, Secrets Manager, first-time vs CI deploys.
+- **CI:** Pushing to **`main`** runs [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). Requires **`AWS_DEPLOY_ROLE_ARN`** and IAM OIDC trust (see `DEPLOYMENT.md`).
+- **Manual (same steps as CI, from your laptop):** **[`docs/MANUAL_DEPLOY.md`](docs/MANUAL_DEPLOY.md)** — Docker → ECR, migrate task, ECS rollout, frontend S3 + CloudFront.
 
 ---
 

@@ -1,5 +1,26 @@
 # Lakshmi Gallery — Deployment Guide
 
+## Pre-deploy checklist (first time or new account)
+
+Before deploying, you must:
+
+1. **Bootstrap CDK** in your AWS account/region:
+   ```bash
+   cdk bootstrap aws://ACCOUNT_ID/us-east-1
+   ```
+2. **Create the GitHub OIDC provider** in IAM (one-time per account) — see [OIDC for GitHub Actions](#oidc-for-github-actions-one-time-setup) below.
+3. **Create an IAM role** GitHub Actions can assume (trust policy scoped to your repo/`main`), attach policies for ECR, ECS, CDK/CloudFormation, S3, CloudFront, etc., then set **`AWS_DEPLOY_ROLE_ARN`** as a GitHub repository secret (Actions).
+4. **Push an initial Docker image to ECR** (`lakshmi-gallery-backend:latest`) *before* or right after the first ECS deploy — the API/worker tasks need an image to start. **CI/CD pushes subsequent images** on each push to `main` (once OIDC works).
+5. **After first `cdk deploy`**, open **Secrets Manager** and set (CDK creates the secrets; you supply values where noted):
+   - `lakshmi-gallery/cloudfront-private-key` → PEM for CloudFront signed URLs  
+   - `lakshmi-gallery/cloudfront-key-pair-id` → CloudFront key pair ID  
+   - Optionally **`lakshmi-gallery/admin-password`** → your preferred admin login password (CDK may have auto-generated one)
+6. **Run DB migrations** once: the GitHub workflow runs a one-off ECS migrate task; for a fully manual first deploy, see **[`docs/MANUAL_DEPLOY.md`](docs/MANUAL_DEPLOY.md)** (same `run-task` pattern as CI).
+
+For the full first-time command sequence (CDK, ECR, ECS, frontend), see **[Deploy → First-time setup](#first-time-setup)** below and **`docs/MANUAL_DEPLOY.md`**.
+
+---
+
 ## Architecture
 
 ```
@@ -138,7 +159,7 @@ cdk bootstrap aws://ACCOUNT_ID/us-east-1
 # 3. Deploy infrastructure
 cd infra
 npm install
-npx cdk deploy --all
+npx cdk deploy --all --require-approval never
 
 # 4. Note outputs: ECR repo URI, bucket names, CloudFront domains, etc.
 
@@ -153,14 +174,16 @@ aws ecr get-login-password | docker login --username AWS --password-stdin ACCOUN
 docker build -t ACCOUNT.dkr.ecr.REGION.amazonaws.com/lakshmi-gallery-backend:latest .
 docker push ACCOUNT.dkr.ecr.REGION.amazonaws.com/lakshmi-gallery-backend:latest
 
-# 7. Force ECS services to pick up the image
+# 7. Run database migrations (one-off Fargate task — same idea as CI; see docs/MANUAL_DEPLOY.md for full aws ecs run-task example using MigrateTaskDefArn, subnets, security group from CDK outputs)
+
+# 8. Force ECS services to pick up the image
 aws ecs update-service --cluster lakshmi-gallery-cluster --service lakshmi-gallery-api --force-new-deployment
 aws ecs update-service --cluster lakshmi-gallery-cluster --service lakshmi-gallery-worker --force-new-deployment
 
-# 8. Build + deploy frontend
+# 9. Build + deploy frontend
 cd ../client
 npm install
-VITE_API_BASE_URL=http://ALB_DNS/api npm run build
+npm run build
 aws s3 sync dist/ s3://lakshmi-gallery-frontend-ACCOUNT/ --delete
 aws cloudfront create-invalidation --distribution-id DIST_ID --paths "/*"
 ```

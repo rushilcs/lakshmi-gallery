@@ -59,7 +59,9 @@ export function AdminPage() {
                 setError(null);
                 return load();
               })
-              .catch(() => setError("Invalid credentials"));
+              .catch((err: unknown) =>
+                setError(err instanceof Error ? err.message : "Sign-in failed"),
+              );
           }}
         >
           <input

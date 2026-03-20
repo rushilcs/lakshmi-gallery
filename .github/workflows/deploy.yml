@@ -122,8 +122,6 @@ jobs:
 
       - name: Build frontend
         working-directory: client
-        env:
-          VITE_API_BASE_URL: http://${{ steps.cdk.outputs.alb_dns }}/api
         run: npm run build
 
       - name: Upload frontend to S3

@@ -1,6 +1,10 @@
 import type { DefaultSort, GalleryPayload } from "../types";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.PROD ? "/api" : "http://localhost:4000/api");
+/**
+ * Same-origin `/api` in browser (HTTPS CloudFront + `/api/*` → ALB in prod; Vite proxy in dev).
+ * Never use `http://` here — mixed content blocks admin login from an HTTPS page.
+ */
+const API_BASE = "/api";
 
 async function parseJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -16,7 +20,16 @@ export async function adminLogin(input: { password: string }): Promise<void> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
-  await parseJson(response);
+  if (response.status === 401) {
+    throw new Error("Invalid credentials");
+  }
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(
+      text ? `Sign-in failed (${response.status}): ${text.slice(0, 200)}` : `Sign-in failed (${response.status})`,
+    );
+  }
+  await response.json();
 }
 
 export async function adminLogout(): Promise<void> {

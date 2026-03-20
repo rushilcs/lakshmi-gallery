@@ -275,6 +275,20 @@ export class LakshmiGalleryStack extends cdk.Stack {
     });
     apiService.targetGroup.configureHealthCheck({ path: "/health", interval: cdk.Duration.seconds(30) });
 
+    // Browser uses relative `/api/*` on the frontend CloudFront domain (HTTPS) → proxy to ALB (HTTP) to avoid mixed content.
+    frontendDistribution.addBehavior(
+      "/api/*",
+      new origins.LoadBalancerV2Origin(apiService.loadBalancer, {
+        protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+      }),
+      {
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+      },
+    );
+
     // ── Worker Service ──
     const workerLogGroup = new logs.LogGroup(this, "WorkerLogs", {
       logGroupName: `/ecs/${appName}/worker`,
