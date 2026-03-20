@@ -461,7 +461,7 @@ export function GalleryViewer(props: {
                             textAlign: "left",
                           }}
                         >
-                          {row.name} ({row.image_count})
+                          {row.name}
                         </span>
                       </button>
                     )}

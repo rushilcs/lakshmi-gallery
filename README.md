@@ -75,7 +75,7 @@ Copy or export variables as needed; the server validates config at startup (`ser
 ## Terminology
 
 - **Admin — “Folders”** — Curated groups you create under **Manage → Folders**. You can rename (✎) and assign photos; order is controlled from **Preview** (“Save album order”).
-- **Guest UI — “Albums”** — Upload folders and curated folders are merged into one **Albums** list (with counts). Guests never see reorder arrows or the rename pencil.
+- **Guest UI — “Albums”** — Upload folders and curated folders are merged into one **Albums** list. Guests never see reorder arrows or the rename pencil.
 
 In **Preview**, use ↑ ↓ and ✎ in the sidebar to reorder or rename any album (upload-derived or curated); **Save album order** persists layout and display names for upload folders.
 
