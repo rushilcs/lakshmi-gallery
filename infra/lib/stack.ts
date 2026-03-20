@@ -9,6 +9,7 @@ import * as rds from "aws-cdk-lib/aws-rds";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
@@ -109,7 +110,21 @@ export class LakshmiGalleryStack extends cdk.Stack {
     const frontendOac = new cloudfront.S3OriginAccessControl(this, "FrontendOac", {
       signing: cloudfront.Signing.SIGV4_ALWAYS,
     });
+
+    // Custom domain (optional): ACM cert MUST be in us-east-1 for CloudFront. Set via CDK context — see README / DEPLOYMENT.
+    const customCertArn = (this.node.tryGetContext("customDomainCertificateArn") as string | undefined)?.trim();
+    const customNamesRaw = (this.node.tryGetContext("customDomainNames") as string | undefined)?.trim();
+    const customDomainNames = customNamesRaw
+      ? customNamesRaw.split(",").map((s) => s.trim()).filter(Boolean)
+      : [];
+    const customCert =
+      customCertArn && customDomainNames.length > 0
+        ? acm.Certificate.fromCertificateArn(this, "FrontendTlsCert", customCertArn)
+        : undefined;
+
     const frontendDistribution = new cloudfront.Distribution(this, "FrontendCf", {
+      certificate: customCert,
+      domainNames: customCert ? customDomainNames : undefined,
       defaultBehavior: {
         origin: origins.S3BucketOrigin.withOriginAccessControl(frontendBucket, { originAccessControl: frontendOac }),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -218,6 +233,15 @@ export class LakshmiGalleryStack extends cdk.Stack {
     );
 
     // ── Shared environment ──
+    const cfDefaultOrigin = `https://${frontendDistribution.distributionDomainName}`;
+    const allowedOriginSet = new Set<string>([cfDefaultOrigin]);
+    for (const host of customDomainNames) {
+      allowedOriginSet.add(`https://${host}`);
+    }
+    const publicAppUrl =
+      (this.node.tryGetContext("publicAppUrl") as string | undefined)?.trim() ||
+      (customDomainNames[0] ? `https://${customDomainNames[0]}` : cfDefaultOrigin);
+
     const sharedEnv: Record<string, string> = {
       NODE_ENV: "production",
       PORT: "4000",
@@ -226,8 +250,8 @@ export class LakshmiGalleryStack extends cdk.Stack {
       CLOUDFRONT_DOMAIN: mediaDistribution.distributionDomainName,
       REKOGNITION_COLLECTION_ID_PREFIX: appName,
       SQS_QUEUE_URL: jobQueue.queueUrl,
-      ALLOWED_ORIGINS: `https://${frontendDistribution.distributionDomainName}`,
-      PUBLIC_APP_URL: `https://${frontendDistribution.distributionDomainName}`,
+      ALLOWED_ORIGINS: [...allowedOriginSet].join(","),
+      PUBLIC_APP_URL: publicAppUrl,
       DB_HOST: dbInstance.dbInstanceEndpointAddress,
       DB_PORT: dbInstance.dbInstanceEndpointPort,
       DB_NAME: "gallery",

@@ -225,6 +225,26 @@ export async function reorderAdminFolders(
   }
 }
 
+export type SidebarNavItem =
+  | { type: "upload"; path: string }
+  | { type: "folder"; id: string };
+
+export async function saveGallerySidebarLayout(
+  galleryId: string,
+  input: { nav: SidebarNavItem[]; upload_folder_labels?: Record<string, string> },
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/admin/galleries/${galleryId}/sidebar`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || "Could not save album layout");
+  }
+}
+
 export async function setFolderImages(
   galleryId: string,
   folderId: string,

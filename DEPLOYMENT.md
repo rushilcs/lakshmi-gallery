@@ -64,6 +64,58 @@ Client (browser)
 
 Deploy applies worker scaling automatically—no console changes beyond a normal `cdk deploy`.
 
+## Custom domain (e.g. lakshmigallery.com)
+
+### What the repo does today
+
+- The **frontend** is one CloudFront distribution (`FrontendCf`) with the default hostname `*.cloudfront.net` (e.g. `d3pg7tiyxv6pjq.cloudfront.net`).
+- That same distribution already has a behavior for **`/api/*`** → your **ALB** (so the CloudFront URL is the correct entry point for both SPA and API).
+- **Alternate domain names (CNAMEs) and an ACM certificate were not attached** until you pass CDK context (see below). `infra/cdk.json` had unused `domainName` / `frontendDomainName` keys — they are **not** wired into the stack.
+
+### Why your apex hits Google
+
+If `nslookup lakshmigallery.com` points to **34.111.x.x** (or similar) and responses show **`via: google`**, traffic is going to **Google-hosted infrastructure**, not CloudFront. Fixing that is a **DNS change** at your registrar: you must stop using that A/AAAA record and point the name at **this** CloudFront distribution instead.
+
+### AWS requirements
+
+1. **ACM certificate in `us-east-1` (N. Virginia)** — CloudFront only uses certificates in that region, even if the rest of the stack is elsewhere.
+2. The certificate must cover every hostname you add to the distribution, e.g. **`lakshmigallery.com`** and **`www.lakshmigallery.com`** (SAN cert or two names on one cert).
+3. **DNS validation**: in ACM, create the CNAME records ACM shows; wait until status is **Issued**.
+4. Deploy with CDK context so the **frontend** distribution gets `certificate` + `domainNames`, and ECS env gets CORS origins for your HTTPS URLs.
+
+### CDK context (after cert is issued)
+
+Example (adjust ARN and comma-separated names):
+
+```bash
+npx cdk deploy --all \
+  -c customDomainCertificateArn=arn:aws:acm:us-east-1:ACCOUNT:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx \
+  -c customDomainNames=lakshmigallery.com,www.lakshmigallery.com \
+  -c publicAppUrl=https://lakshmigallery.com
+```
+
+- **`publicAppUrl`**: canonical site URL for `PUBLIC_APP_URL` (first custom host is used if omitted).
+- **`ALLOWED_ORIGINS`** is set automatically to the default `*.cloudfront.net` URL plus `https://` for each name in `customDomainNames`.
+
+For **GitHub Actions**, add the same `-c` flags to the `cdk deploy` step (or store a small deploy script).
+
+### DNS records at your DNS provider
+
+Use the **exact** `*.cloudfront.net` domain from stack output **`FrontendCfDomain`** (or the CloudFront console) as the target — below `d3pg7tiyxv6pjq.cloudfront.net` is only an example.
+
+| Name | Type | Value / target |
+|------|------|----------------|
+| **www** | **CNAME** | `d3pg7tiyxv6pjq.cloudfront.net` |
+| **@** (apex) | **ALIAS / ANAME / flattened CNAME** (if your provider supports it) | `d3pg7tiyxv6pjq.cloudfront.net` |
+
+If your DNS host **cannot** point the apex to CloudFront, use **Route 53** for the zone (alias A/AAAA to the distribution) or serve only **`www`** and redirect apex → www from DNS/provider rules.
+
+**Do not** point `lakshmigallery.com` at a random Google IP if you want this stack; that will never reach CloudFront.
+
+### Media CloudFront
+
+The **media** distribution is separate and still uses only its default `*.cloudfront.net` name unless you extend the CDK similarly (another cert + aliases). Signed URLs use the media domain from the API; custom **site** domain does not replace that unless you change it deliberately.
+
 ## AWS Prerequisites
 
 - An AWS account with programmatic access

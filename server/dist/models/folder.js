@@ -1,1 +1,1 @@
-export { addImageToFolder, createFolder, deleteFolder, getImageIdsForFolder, listFoldersByGallery, removeImageFromFolder, renameFolder, setFolderImages, } from "../src/db/repositories/folder.js";
+export { addImageToFolder, createFolder, deleteFolder, getImageIdsForFolder, listFoldersByGallery, removeImageFromFolder, renameFolder, setFolderDisplayOrder, setFolderImages, } from "../src/db/repositories/folder.js";

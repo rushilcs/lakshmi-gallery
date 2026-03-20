@@ -60,6 +60,15 @@ export interface AdminFolder {
   image_ids: string[];
 }
 
+/** Unified sidebar row: upload path or curated folder (same ordering & labels for both). */
+export interface SidebarAlbumEntry {
+  kind: "upload" | "folder";
+  /** upload: folder_path; folder: gallery_folders.id */
+  key: string;
+  name: string;
+  image_count: number;
+}
+
 export interface GalleryPayload {
   gallery: Gallery;
   images: ImageAsset[];
@@ -67,4 +76,6 @@ export interface GalleryPayload {
   person_clusters: PersonCluster[];
   watermark_url?: string | null;
   admin_folders?: AdminFolder[];
+  /** Ordered albums for sidebar (upload folders + curated folders interleaved). */
+  sidebar_albums?: SidebarAlbumEntry[];
 }

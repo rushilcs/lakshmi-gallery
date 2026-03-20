@@ -75,15 +75,16 @@ Copy or export variables as needed; the server validates config at startup (`ser
 ## Terminology
 
 - **Admin — “Folders”** — Curated groups you create under **Manage → Folders**. You can rename (✎) and assign photos; order is controlled from **Preview** (“Save album order”).
-- **Guest UI — “Albums”** — The same groups appear in the sidebar as **Albums** (no per-folder photo counts in the nav).
+- **Guest UI — “Albums”** — Upload folders and curated folders are merged into one **Albums** list (with counts). Guests never see reorder arrows or the rename pencil.
 
-Upload ZIP/folder structure still surfaces as path names in the sidebar alongside curator albums.
+In **Preview**, use ↑ ↓ and ✎ in the sidebar to reorder or rename any album (upload-derived or curated); **Save album order** persists layout and display names for upload folders.
 
 ## Notable API (admin, cookie session)
 
 - `POST /api/admin/login` / `logout` / `GET session`
 - `POST /api/admin/galleries` — create (returns `{ gallery }`)
 - `PUT /api/admin/galleries/:galleryId/folders/order` — body `{ folder_ids: string[] }` (every folder id exactly once)
+- `PUT /api/admin/galleries/:galleryId/sidebar` — body `{ nav: ({ type:'upload', path } | { type:'folder', id })[], upload_folder_labels?: Record<path, string> }` (nav lists every upload path and curated folder id exactly once)
 - `POST /api/admin/galleries/:galleryId/rebuild-thumbnails` — enqueue thumb regeneration (see below)
 
 ## Static assets (client)

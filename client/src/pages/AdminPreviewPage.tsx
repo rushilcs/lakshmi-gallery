@@ -2,15 +2,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { GalleryViewer } from "../components/GalleryViewer";
 import { ViewerStateProvider } from "../context/ViewerStateContext";
-import { previewGallery, reorderAdminFolders } from "../lib/api";
-import type { DefaultSort, GalleryPayload } from "../types";
+import { previewGallery, saveGallerySidebarLayout } from "../lib/api";
+import type { DefaultSort, GalleryPayload, SidebarAlbumEntry } from "../types";
 
 export function AdminPreviewPage() {
   const { id = "" } = useParams();
   const [payload, setPayload] = useState<GalleryPayload | null>(null);
   const [sort, setSort] = useState<DefaultSort>("uploaded_desc");
   const [error, setError] = useState<string | null>(null);
-  const [orderedFolderIds, setOrderedFolderIds] = useState<string[]>([]);
+  const [sidebarAlbums, setSidebarAlbums] = useState<SidebarAlbumEntry[]>([]);
   const [orderSaving, setOrderSaving] = useState(false);
   const [orderMessage, setOrderMessage] = useState<string | null>(null);
 
@@ -18,7 +18,7 @@ export function AdminPreviewPage() {
     try {
       const data = await previewGallery(id, sort);
       setPayload(data);
-      setOrderedFolderIds((data.admin_folders ?? []).map((f) => f.id));
+      setSidebarAlbums(data.sidebar_albums ?? []);
       setError(null);
     } catch (e) {
       setError(String(e));
@@ -31,34 +31,23 @@ export function AdminPreviewPage() {
 
   const previewPayload = useMemo((): GalleryPayload | null => {
     if (!payload) return null;
-    if (orderedFolderIds.length === 0) return payload;
-    const byId = new Map((payload.admin_folders ?? []).map((f) => [f.id, f]));
-    const reordered = orderedFolderIds
-      .map((fid) => byId.get(fid))
-      .filter((f): f is NonNullable<typeof f> => f != null);
-    if (reordered.length !== (payload.admin_folders ?? []).length) return payload;
-    return { ...payload, admin_folders: reordered };
-  }, [payload, orderedFolderIds]);
-
-  const moveFolder = (index: number, dir: -1 | 1) => {
-    setOrderedFolderIds((prev) => {
-      const next = [...prev];
-      const j = index + dir;
-      if (j < 0 || j >= next.length) return prev;
-      [next[index], next[j]] = [next[j], next[index]];
-      return next;
-    });
-    setOrderMessage(null);
-  };
+    return { ...payload, sidebar_albums: sidebarAlbums };
+  }, [payload, sidebarAlbums]);
 
   const saveFolderOrder = async () => {
-    if (orderedFolderIds.length === 0) return;
+    if (sidebarAlbums.length === 0) return;
     setOrderSaving(true);
     setOrderMessage(null);
     try {
-      await reorderAdminFolders(id, orderedFolderIds);
+      const nav = sidebarAlbums.map((a) =>
+        a.kind === "upload" ? { type: "upload" as const, path: a.key } : { type: "folder" as const, id: a.key },
+      );
+      const upload_folder_labels = Object.fromEntries(
+        sidebarAlbums.filter((a) => a.kind === "upload").map((a) => [a.key, a.name]),
+      );
+      await saveGallerySidebarLayout(id, { nav, upload_folder_labels });
       await reload();
-      setOrderMessage("Order saved.");
+      setOrderMessage("Saved.");
     } catch (e) {
       setOrderMessage(String(e));
     } finally {
@@ -75,10 +64,6 @@ export function AdminPreviewPage() {
     );
   }
 
-  const folderRows = orderedFolderIds
-    .map((fid) => (payload.admin_folders ?? []).find((f) => f.id === fid))
-    .filter((f): f is NonNullable<typeof f> => f != null);
-
   return (
     <div className="admin-preview-wrap">
       <div
@@ -89,7 +74,7 @@ export function AdminPreviewPage() {
           background: "var(--bg-elevated)",
         }}
       >
-        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, marginBottom: 10 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
           <Link to={`/admin/gallery/${id}`} className="btn-ghost">
             ← Back to manage
           </Link>
@@ -97,7 +82,7 @@ export function AdminPreviewPage() {
           <button
             type="button"
             className="btn-primary"
-            disabled={orderSaving || folderRows.length < 2}
+            disabled={orderSaving || sidebarAlbums.length < 2}
             onClick={() => void saveFolderOrder()}
           >
             {orderSaving ? "Saving…" : "Save album order"}
@@ -106,50 +91,21 @@ export function AdminPreviewPage() {
             <span style={{ fontSize: 13, color: "var(--text-muted)" }}>{orderMessage}</span>
           ) : null}
         </div>
-        {folderRows.length === 0 ? (
-          <p className="hint" style={{ margin: 0 }}>
-            No albums yet. Add folders under Manage → Folders.
-          </p>
-        ) : (
-          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 6 }}>
-            {folderRows.map((f, i) => (
-              <li
-                key={f.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  fontSize: 13,
-                }}
-              >
-                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</span>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  style={{ padding: "4px 10px" }}
-                  disabled={i === 0}
-                  onClick={() => moveFolder(i, -1)}
-                  aria-label="Move album up"
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  style={{ padding: "4px 10px" }}
-                  disabled={i === folderRows.length - 1}
-                  onClick={() => moveFolder(i, 1)}
-                  aria-label="Move album down"
-                >
-                  ↓
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+        <p className="hint" style={{ margin: "10px 0 0", fontSize: 13 }}>
+          Reorder and rename albums in the sidebar with ↑ ↓ and ✎ (clients do not see those controls).
+        </p>
       </div>
       <ViewerStateProvider galleryShareToken={previewPayload.gallery.share_token}>
-        <GalleryViewer payload={previewPayload} sort={sort} onSortChange={setSort} />
+        <GalleryViewer
+          payload={previewPayload}
+          sort={sort}
+          onSortChange={setSort}
+          adminAlbumSidebarEditor={{
+            galleryId: id,
+            albums: sidebarAlbums,
+            setAlbums: setSidebarAlbums,
+          }}
+        />
       </ViewerStateProvider>
     </div>
   );

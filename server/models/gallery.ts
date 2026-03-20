@@ -7,6 +7,7 @@ export {
   setGalleryCover,
   setGalleryDefaultSort,
   setGalleryPublish,
+  setGallerySidebarNav,
   setGalleryWatermarkAsset,
   setGalleryWatermarkEnabled,
   setGalleryWatermarkPosition,

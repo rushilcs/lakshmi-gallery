@@ -1,7 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { DefaultSort, Gallery, GalleryPayload, ImageAsset } from "../types";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
+import type { DefaultSort, Gallery, GalleryPayload, ImageAsset, SidebarAlbumEntry } from "../types";
 import { useViewerState } from "../context/ViewerStateContext";
-import { getWatermarkedDownloadUrl } from "../lib/api";
+import { getWatermarkedDownloadUrl, renameFolder as renameCuratedFolderApi } from "../lib/api";
 import { PersonLabelEditor } from "./PersonLabelEditor";
 import { FolderDropZone } from "./FolderDropZone";
 
@@ -77,12 +85,37 @@ function ThumbWithWatermark(props: {
 /* ═══════════════════════════════════════════════════════════
    GalleryViewer — Left sidebar + full-width gallery
    ═══════════════════════════════════════════════════════════ */
+function legacySidebarAlbums(payload: GalleryPayload): SidebarAlbumEntry[] {
+  const uploads = payload.folder_set
+    .filter((f) => f !== "root")
+    .sort((a, b) => a.localeCompare(b))
+    .map((path) => ({
+      kind: "upload" as const,
+      key: path,
+      name: path,
+      image_count: payload.images.filter((i) => i.folder_path === path).length,
+    }));
+  const curated = (payload.admin_folders ?? []).map((f) => ({
+    kind: "folder" as const,
+    key: f.id,
+    name: f.name,
+    image_count: f.image_ids.length,
+  }));
+  return [...uploads, ...curated];
+}
+
 export function GalleryViewer(props: {
   payload: GalleryPayload;
   sort: DefaultSort;
   onSortChange: (next: DefaultSort) => void;
+  /** Admin preview only: reorder / rename upload + curated albums in the sidebar. */
+  adminAlbumSidebarEditor?: {
+    galleryId: string;
+    albums: SidebarAlbumEntry[];
+    setAlbums: Dispatch<SetStateAction<SidebarAlbumEntry[]>>;
+  };
 }) {
-  const { payload, sort, onSortChange } = props;
+  const { payload, sort, onSortChange, adminAlbumSidebarEditor } = props;
   const {
     state,
     warning,
@@ -111,6 +144,8 @@ export function GalleryViewer(props: {
   const [newFolderName, setNewFolderName] = useState("");
   const [editingFolder, setEditingFolder] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
+  const [editingSidebarAlbum, setEditingSidebarAlbum] = useState<{ kind: string; key: string } | null>(null);
+  const [editSidebarAlbumName, setEditSidebarAlbumName] = useState("");
 
   const [folderPopover, setFolderPopover] = useState<{
     imageId: string;
@@ -134,6 +169,10 @@ export function GalleryViewer(props: {
   const adminFolders = useMemo(
     () => payload.admin_folders ?? [],
     [payload.admin_folders],
+  );
+  const sidebarAlbumNav = useMemo(
+    () => payload.sidebar_albums ?? legacySidebarAlbums(payload),
+    [payload],
   );
   const adminFolderIds = useMemo(
     () => new Set(adminFolders.map((f) => f.id)),
@@ -304,6 +343,45 @@ export function GalleryViewer(props: {
     setSidebarOpen(false);
   }, []);
 
+  const moveSidebarAlbum = useCallback(
+    (index: number, dir: -1 | 1) => {
+      if (!adminAlbumSidebarEditor) return;
+      adminAlbumSidebarEditor.setAlbums((prev) => {
+        const next = [...prev];
+        const j = index + dir;
+        if (j < 0 || j >= next.length) return prev;
+        [next[index], next[j]] = [next[j], next[index]];
+        return next;
+      });
+    },
+    [adminAlbumSidebarEditor],
+  );
+
+  const finishSidebarAlbumEdit = useCallback(async () => {
+    if (!adminAlbumSidebarEditor || !editingSidebarAlbum) return;
+    const name = editSidebarAlbumName.trim();
+    const { kind, key } = editingSidebarAlbum;
+    if (!name) {
+      setEditingSidebarAlbum(null);
+      return;
+    }
+    if (kind === "folder") {
+      try {
+        await renameCuratedFolderApi(adminAlbumSidebarEditor.galleryId, key, name);
+      } catch {
+        return;
+      }
+      adminAlbumSidebarEditor.setAlbums((rows) =>
+        rows.map((r) => (r.kind === "folder" && r.key === key ? { ...r, name } : r)),
+      );
+    } else {
+      adminAlbumSidebarEditor.setAlbums((rows) =>
+        rows.map((r) => (r.kind === "upload" && r.key === key ? { ...r, name } : r)),
+      );
+    }
+    setEditingSidebarAlbum(null);
+  }, [adminAlbumSidebarEditor, editingSidebarAlbum, editSidebarAlbumName]);
+
   return (
     <div className="gallery-shell">
       {/* Mobile sidebar backdrop */}
@@ -327,31 +405,106 @@ export function GalleryViewer(props: {
           >
             All
           </button>
-          {serverFolders.map((f) => (
-            <button
-              key={f}
-              type="button"
-              className={`nav-item${sidebarSelection === f ? " active" : ""}`}
-              onClick={() => selectSidebar(f)}
-            >
-              {f}
-            </button>
-          ))}
-          {adminFolders.length > 0 ? (
+          {sidebarAlbumNav.length > 0 ? (
             <>
               <div className="nav-section">Albums</div>
-              {adminFolders.map((f) => (
-                <button
-                  key={f.id}
-                  type="button"
-                  className={`nav-item${sidebarSelection === f.id ? " active" : ""}`}
-                  onClick={() => selectSidebar(f.id)}
-                >
-                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {f.name}
-                  </span>
-                </button>
-              ))}
+              {sidebarAlbumNav.map((row, index) => {
+                const sel = row.key;
+                const editRef = `${row.kind}:${row.key}`;
+                const isEditing =
+                  editingSidebarAlbum?.kind === row.kind && editingSidebarAlbum?.key === row.key;
+                return (
+                  <div
+                    key={editRef}
+                    style={{
+                      display: "flex",
+                      alignItems: "stretch",
+                      gap: 2,
+                      margin: "0 4px 2px 8px",
+                      minHeight: 36,
+                    }}
+                  >
+                    {adminAlbumSidebarEditor && isEditing ? (
+                      <input
+                        value={editSidebarAlbumName}
+                        autoFocus
+                        maxLength={120}
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          padding: "6px 8px",
+                          border: "1px solid var(--accent)",
+                          borderRadius: 4,
+                          background: "var(--bg)",
+                          color: "var(--text)",
+                          fontSize: 13,
+                        }}
+                        onChange={(e) => setEditSidebarAlbumName(e.target.value)}
+                        onBlur={() => void finishSidebarAlbumEdit()}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void finishSidebarAlbumEdit();
+                          if (e.key === "Escape") setEditingSidebarAlbum(null);
+                        }}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        className={`nav-item${sidebarSelection === sel ? " active" : ""}`}
+                        style={{ flex: 1, minWidth: 0, justifyContent: "flex-start", textAlign: "left" }}
+                        onClick={() => selectSidebar(sel)}
+                      >
+                        <span
+                          style={{
+                            flex: 1,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            textAlign: "left",
+                          }}
+                        >
+                          {row.name} ({row.image_count})
+                        </span>
+                      </button>
+                    )}
+                    {adminAlbumSidebarEditor && !isEditing ? (
+                      <>
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          style={{ padding: "2px 6px", flexShrink: 0, alignSelf: "center" }}
+                          disabled={index === 0}
+                          onClick={() => moveSidebarAlbum(index, -1)}
+                          aria-label="Move album up"
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          style={{ padding: "2px 6px", flexShrink: 0, alignSelf: "center" }}
+                          disabled={index === sidebarAlbumNav.length - 1}
+                          onClick={() => moveSidebarAlbum(index, 1)}
+                          aria-label="Move album down"
+                        >
+                          ↓
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          style={{ padding: "2px 6px", flexShrink: 0, alignSelf: "center" }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingSidebarAlbum({ kind: row.kind, key: row.key });
+                            setEditSidebarAlbumName(row.name);
+                          }}
+                          aria-label="Rename album"
+                        >
+                          ✎
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                );
+              })}
             </>
           ) : null}
           <div className="nav-section">Favorites</div>

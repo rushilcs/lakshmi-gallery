@@ -13,6 +13,11 @@ import { relations } from "drizzle-orm";
 export const defaultSortEnum = ["uploaded_desc", "uploaded_asc", "taken_desc", "taken_asc"] as const;
 export type DefaultSort = (typeof defaultSortEnum)[number];
 
+/** Stored shape in galleries.sidebar_nav */
+export type SidebarNavStoredItem =
+  | { type: "upload"; path: string }
+  | { type: "folder"; id: string };
+
 export const galleries = pgTable("galleries", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
@@ -31,6 +36,10 @@ export const galleries = pgTable("galleries", {
   watermarkXPctPortrait: real("watermark_x_pct_portrait").default(100),
   watermarkYPctPortrait: real("watermark_y_pct_portrait").default(100),
   defaultSort: text("default_sort").notNull().default("uploaded_desc"),
+  /** Interleaved upload paths + curated folder IDs (JSON array). Null = default ordering. */
+  sidebarNav: jsonb("sidebar_nav").$type<SidebarNavStoredItem[] | null>(),
+  /** folder_path -> display name overrides for upload-derived folders */
+  uploadFolderLabels: jsonb("upload_folder_labels").$type<Record<string, string> | null>(),
 });
 
 export const imageAssets = pgTable("image_assets", {

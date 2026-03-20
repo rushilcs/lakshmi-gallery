@@ -8,6 +8,7 @@ import { getImageIdsForCluster, listPersonClustersByGallery } from "../models/pe
 import { signedUrlsForImage } from "../services/ingestion.js";
 import { getSignedViewUrl, readBufferFromStorage, } from "../services/s3.js";
 import { applyWatermarkOverlay } from "../services/watermark.js";
+import { hydrateSidebarAlbums } from "../src/services/sidebarNav.js";
 const sortSchema = z
     .enum(["uploaded_desc", "uploaded_asc", "taken_desc", "taken_asc"])
     .optional();
@@ -42,6 +43,13 @@ async function buildGalleryResponse(input) {
         name: f.name,
         image_ids: await getImageIdsForFolder(f.id),
     })));
+    const sidebar_albums = hydrateSidebarAlbums({
+        sidebar_nav: gallery.sidebar_nav,
+        upload_folder_labels: gallery.upload_folder_labels,
+        images: hydratedImages,
+        folderRows,
+        adminFolders: admin_folders,
+    });
     return {
         gallery,
         images: hydratedImages,
@@ -49,6 +57,7 @@ async function buildGalleryResponse(input) {
         person_clusters,
         watermark_url,
         admin_folders,
+        sidebar_albums,
     };
 }
 export const galleryRouter = Router();

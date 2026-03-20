@@ -16,6 +16,7 @@ import {
   setGalleryCover,
   setGalleryDefaultSort,
   setGalleryPublish,
+  setGallerySidebarNav,
   setGalleryWatermarkAsset,
   setGalleryWatermarkEnabled,
   setGalleryWatermarkPosition,
@@ -40,6 +41,12 @@ import {
   getSignedPutUploadUrl,
   getSignedViewUrl,
 } from "../services/s3.js";
+import {
+  assertNavIsCompletePermutation,
+  compactUploadLabels,
+  hydrateSidebarAlbums,
+  uploadPathsFromImages,
+} from "../src/services/sidebarNav.js";
 
 const loginSchema = z.object({
   password: z.string().min(1),
@@ -134,7 +141,22 @@ async function buildAdminGalleryPayload(galleryId: string): Promise<unknown | nu
     })),
   );
   const folder_set = [...new Set((hydrated as { folder_path: string }[]).map((i) => i.folder_path))];
-  return { gallery, images: hydrated, person_clusters, watermark_url, admin_folders, folder_set };
+  const sidebar_albums = hydrateSidebarAlbums({
+    sidebar_nav: gallery.sidebar_nav,
+    upload_folder_labels: gallery.upload_folder_labels,
+    images: hydrated,
+    folderRows,
+    adminFolders: admin_folders,
+  });
+  return {
+    gallery,
+    images: hydrated,
+    person_clusters,
+    watermark_url,
+    admin_folders,
+    folder_set,
+    sidebar_albums,
+  };
 }
 
 export const adminRouter = Router();
@@ -447,6 +469,60 @@ adminRouter.put("/galleries/:galleryId/folders/order", async (req, res) => {
   }
   try {
     await setFolderDisplayOrder(galleryId, parsed.data.folder_ids);
+  } catch (err) {
+    res.status(400).json({ error: String(err) });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+const sidebarNavItemSchema = z.union([
+  z.object({ type: z.literal("upload"), path: z.string().trim().min(1).max(2048) }),
+  z.object({ type: z.literal("folder"), id: z.string().uuid() }),
+]);
+const sidebarLayoutSchema = z.object({
+  nav: z.array(sidebarNavItemSchema),
+  upload_folder_labels: z.record(z.string(), z.string().trim().min(1).max(120)).optional(),
+});
+
+adminRouter.put("/galleries/:galleryId/sidebar", async (req, res) => {
+  const parsed = sidebarLayoutSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid payload" });
+    return;
+  }
+  const galleryId =
+    typeof req.params.galleryId === "string" ? req.params.galleryId : "";
+  const gallery = await getGalleryById(galleryId);
+  if (!gallery) {
+    res.status(404).json({ error: "Gallery not found" });
+    return;
+  }
+  const images = await listImagesByGallery(galleryId, "uploaded_desc");
+  const folderRows = await listFoldersByGallery(galleryId);
+  const uploadPaths = new Set(uploadPathsFromImages(images));
+  const folderIds = new Set(folderRows.map((f) => f.id));
+  try {
+    assertNavIsCompletePermutation(parsed.data.nav, uploadPaths, folderIds);
+  } catch (err) {
+    res.status(400).json({ error: String(err) });
+    return;
+  }
+  const labelMap: Record<string, string> = {};
+  for (const item of parsed.data.nav) {
+    if (item.type !== "upload") continue;
+    const fromBody = parsed.data.upload_folder_labels?.[item.path];
+    const fromDb = gallery.upload_folder_labels?.[item.path];
+    const name = (fromBody ?? fromDb ?? item.path).trim();
+    labelMap[item.path] = name;
+  }
+  const uploadFolderLabels = compactUploadLabels(labelMap, uploadPaths);
+  try {
+    await setGallerySidebarNav(galleryId, parsed.data.nav, uploadFolderLabels);
+    const folderOrder = parsed.data.nav.filter((i) => i.type === "folder").map((i) => i.id);
+    if (folderOrder.length > 0) {
+      await setFolderDisplayOrder(galleryId, folderOrder);
+    }
   } catch (err) {
     res.status(400).json({ error: String(err) });
     return;

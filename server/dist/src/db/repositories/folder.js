@@ -41,6 +41,25 @@ export async function deleteFolder(folderId) {
 export async function renameFolder(folderId, name) {
     await getDb().update(galleryFolders).set({ name: name.trim() }).where(eq(galleryFolders.id, folderId));
 }
+/** `folderIds` must list every folder in the gallery exactly once, in desired display order. */
+export async function setFolderDisplayOrder(galleryId, folderIds) {
+    const existing = await listFoldersByGallery(galleryId);
+    const idSet = new Set(existing.map((f) => f.id));
+    if (folderIds.length !== existing.length) {
+        throw new Error("folder_ids must list every folder in the gallery exactly once");
+    }
+    for (const id of folderIds) {
+        if (!idSet.has(id)) {
+            throw new Error("Invalid folder id for this gallery");
+        }
+    }
+    for (let i = 0; i < folderIds.length; i++) {
+        await getDb()
+            .update(galleryFolders)
+            .set({ displayOrder: i })
+            .where(eq(galleryFolders.id, folderIds[i]));
+    }
+}
 export async function getImageIdsForFolder(folderId) {
     const rows = await getDb()
         .select({ imageId: imageFolderJoin.imageId })

@@ -25,6 +25,12 @@
       "when": 1739507200000,
       "tag": "0003_add_image_asset_metadata",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "when": 1739510800000,
+      "tag": "0004_gallery_sidebar_nav",
+      "breakpoints": true
     }
   ]
 }

@@ -1,7 +1,12 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../index.js";
-import { galleries, type DefaultSort } from "../schema.js";
+import {
+  galleries,
+  type DefaultSort,
+  type SidebarNavStoredItem,
+} from "../schema.js";
+import { parseSidebarNav, parseUploadLabels } from "../../services/sidebarNav.js";
 
 export type { DefaultSort };
 
@@ -23,6 +28,8 @@ export interface Gallery {
   watermark_x_pct_portrait: number;
   watermark_y_pct_portrait: number;
   default_sort: DefaultSort;
+  sidebar_nav: SidebarNavStoredItem[] | null;
+  upload_folder_labels: Record<string, string> | null;
 }
 
 function rowToGallery(row: typeof galleries.$inferSelect): Gallery {
@@ -44,6 +51,8 @@ function rowToGallery(row: typeof galleries.$inferSelect): Gallery {
     watermark_x_pct_portrait: row.watermarkXPctPortrait ?? 100,
     watermark_y_pct_portrait: row.watermarkYPctPortrait ?? 100,
     default_sort: row.defaultSort as DefaultSort,
+    sidebar_nav: parseSidebarNav(row.sidebarNav ?? null),
+    upload_folder_labels: parseUploadLabels(row.uploadFolderLabels ?? null),
   };
 }
 
@@ -135,4 +144,18 @@ export async function setGalleryDefaultSort(galleryId: string, sort: DefaultSort
 
 export async function deleteGalleryById(galleryId: string): Promise<void> {
   await getDb().delete(galleries).where(eq(galleries.id, galleryId));
+}
+
+export async function setGallerySidebarNav(
+  galleryId: string,
+  nav: SidebarNavStoredItem[],
+  uploadFolderLabels: Record<string, string> | null,
+): Promise<void> {
+  await getDb()
+    .update(galleries)
+    .set({
+      sidebarNav: nav,
+      uploadFolderLabels,
+    })
+    .where(eq(galleries.id, galleryId));
 }

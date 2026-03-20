@@ -1,7 +1,8 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../index.js";
-import { galleries } from "../schema.js";
+import { galleries, } from "../schema.js";
+import { parseSidebarNav, parseUploadLabels } from "../../services/sidebarNav.js";
 function rowToGallery(row) {
     return {
         id: row.id,
@@ -21,6 +22,8 @@ function rowToGallery(row) {
         watermark_x_pct_portrait: row.watermarkXPctPortrait ?? 100,
         watermark_y_pct_portrait: row.watermarkYPctPortrait ?? 100,
         default_sort: row.defaultSort,
+        sidebar_nav: parseSidebarNav(row.sidebarNav ?? null),
+        upload_folder_labels: parseUploadLabels(row.uploadFolderLabels ?? null),
     };
 }
 export async function createGallery(input) {
@@ -91,4 +94,13 @@ export async function setGalleryDefaultSort(galleryId, sort) {
 }
 export async function deleteGalleryById(galleryId) {
     await getDb().delete(galleries).where(eq(galleries.id, galleryId));
+}
+export async function setGallerySidebarNav(galleryId, nav, uploadFolderLabels) {
+    await getDb()
+        .update(galleries)
+        .set({
+        sidebarNav: nav,
+        uploadFolderLabels,
+    })
+        .where(eq(galleries.id, galleryId));
 }
