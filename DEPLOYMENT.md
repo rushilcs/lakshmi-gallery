@@ -51,6 +51,19 @@ Client (browser)
 4. Worker processes `index_faces` → Rekognition creates face clusters → writes `person_clusters` + joins
 5. Client views gallery → API returns signed CloudFront URLs for media
 
+### Cost & scaling (what runs 24/7 vs on-demand)
+
+| Component | Idle behavior | Notes |
+|-----------|---------------|--------|
+| **Frontend** (S3 + CloudFront) | Always available | Pay per request + tiny storage; no change. |
+| **Media** (S3 + CloudFront signed URLs) | Always available | Same. |
+| **API** (ECS Fargate + ALB) | **Always at least 1 task** | ALB needs healthy targets; scaling to 0 would return errors until a redesign (e.g. Lambda/App Runner). |
+| **Worker** (ECS Fargate) | **Scales to 0** when SQS is empty | Application Auto Scaling tracks `ApproximateNumberOfMessagesVisible` on the job queue (target ~1 msg/task). **First job after idle** may wait **~1–3+ minutes** while Fargate starts a task. |
+| **RDS Postgres** | **Always on** (instance) | True scale-to-zero needs Aurora Serverless v2 or external DB—larger migration. |
+| **NAT Gateway** | **Always on** | Major idle cost driver; removing it needs VPC interface endpoints for ECR/S3/Secrets/etc. |
+
+Deploy applies worker scaling automatically—no console changes beyond a normal `cdk deploy`.
+
 ## AWS Prerequisites
 
 - An AWS account with programmatic access

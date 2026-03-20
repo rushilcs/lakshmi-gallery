@@ -10,6 +10,7 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
+import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import { Construct } from "constructs";
 
@@ -312,10 +313,30 @@ export class LakshmiGalleryStack extends cdk.Stack {
       cluster,
       serviceName: `${appName}-worker`,
       taskDefinition: workerTaskDef,
-      desiredCount: 1,
+      // On-demand: no tasks when the job queue is empty (see autoscaling below).
+      desiredCount: 0,
       assignPublicIp: false,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [ecsSg],
+    });
+
+    // Scale worker 0 → N from SQS depth (event-driven; no 24/7 idle worker task).
+    const workerScaling = workerService.autoScaleTaskCount({
+      minCapacity: 0,
+      maxCapacity: 3,
+    });
+    workerScaling.scaleToTrackCustomMetric("WorkerSqsBacklog", {
+      metric: new cloudwatch.Metric({
+        namespace: "AWS/SQS",
+        metricName: "ApproximateNumberOfMessagesVisible",
+        dimensionsMap: { QueueName: jobQueue.queueName },
+        statistic: cloudwatch.Stats.AVERAGE,
+        period: cdk.Duration.minutes(1),
+      }),
+      // ~1 visible message per running task; backlog 0 ⇒ scale in to min (0).
+      targetValue: 1,
+      scaleInCooldown: cdk.Duration.minutes(3),
+      scaleOutCooldown: cdk.Duration.seconds(45),
     });
 
     // ─── J) Migration Task Definition ───
