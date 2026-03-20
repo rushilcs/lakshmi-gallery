@@ -15,6 +15,7 @@ function ThumbWithWatermark(props: {
   watermarkAspect: number;
 }) {
   const { image, watermarkUrl, gallery, watermarkAspect } = props;
+  const thumbSrc = image.thumb_url ?? "";
   const [dim, setDim] = useState<{ w: number; h: number } | null>(null);
   const isPortrait = dim ? dim.h > dim.w : false;
   const scale = isPortrait ? gallery.watermark_scale_portrait : gallery.watermark_scale;
@@ -29,10 +30,13 @@ function ThumbWithWatermark(props: {
         height: `${scaleY * 100}%`,
       }
     : undefined;
+  if (!thumbSrc) {
+    return <div style={{ width: "100%", aspectRatio: "4 / 3", background: "var(--bg-elevated)" }} />;
+  }
   return (
     <div style={{ position: "relative", display: "block" }}>
       <img
-        src={image.thumb_url}
+        src={thumbSrc}
         alt=""
         loading="lazy"
         style={{ display: "block", width: "100%", height: "auto", verticalAlign: "middle" }}
@@ -120,6 +124,7 @@ export function GalleryViewer(props: {
   const touchStartRef = useRef<{ x: number; y: number; t: number } | null>(null);
 
   const showWatermark = payload.watermark_url != null && payload.watermark_url !== "";
+  const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent);
 
   /* ── Derived ── */
   const serverFolders = useMemo(
@@ -183,7 +188,9 @@ export function GalleryViewer(props: {
 
   const lightboxSrc = useMemo(() => {
     if (!lightboxImage) return null;
-    return zoom > 100 ? lightboxImage.original_url : lightboxImage.preview_url;
+    return zoom > 100
+      ? (lightboxImage.original_url ?? lightboxImage.preview_url ?? lightboxImage.thumb_url)
+      : (lightboxImage.preview_url ?? lightboxImage.thumb_url ?? lightboxImage.original_url);
   }, [lightboxImage, zoom]);
 
   const lightboxIdx = useMemo(() => {
@@ -226,7 +233,6 @@ export function GalleryViewer(props: {
   );
 
   const triggerDownload = useCallback(async (url: string, filename?: string) => {
-    const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent);
     if (isIos) {
       // iOS Safari doesn't support blob download to camera roll; open in new tab so user can long-press to save
       window.open(url, "_blank");
@@ -246,28 +252,30 @@ export function GalleryViewer(props: {
     } catch {
       window.open(url, "_blank");
     }
-  }, []);
+  }, [isIos]);
 
   const downloadSingle = useCallback(() => {
     if (!lightboxImage) return;
     const url = showWatermark
-      ? getWatermarkedDownloadUrl(payload.gallery.share_token, lightboxImage.id)
-      : lightboxImage.original_url;
+      ? getWatermarkedDownloadUrl(payload.gallery.share_token, lightboxImage.id, { inline: isIos })
+      : (lightboxImage.original_url ?? lightboxImage.preview_url ?? lightboxImage.thumb_url);
+    if (!url) return;
     void triggerDownload(url);
-  }, [lightboxImage, payload.gallery.share_token, showWatermark, triggerDownload]);
+  }, [isIos, lightboxImage, payload.gallery.share_token, showWatermark, triggerDownload]);
 
   const downloadSelection = useCallback(() => {
     for (const img of payload.images) {
       if (!selected.has(img.id)) continue;
       const url = showWatermark
-        ? getWatermarkedDownloadUrl(payload.gallery.share_token, img.id)
-        : img.original_url;
+        ? getWatermarkedDownloadUrl(payload.gallery.share_token, img.id, { inline: isIos })
+        : (img.original_url ?? img.preview_url ?? img.thumb_url);
+      if (!url) continue;
       void triggerDownload(url);
     }
     setDlModal(null);
     setSelectMode(false);
     setSelected(new Set());
-  }, [selected, payload.images, payload.gallery.share_token, showWatermark, triggerDownload]);
+  }, [isIos, selected, payload.images, payload.gallery.share_token, showWatermark, triggerDownload]);
 
   const addSelectionToFolder = useCallback(
     async (folderId: string) => {
@@ -318,7 +326,6 @@ export function GalleryViewer(props: {
             onClick={() => selectSidebar("__all__")}
           >
             All
-            <span className="count">{payload.images.length}</span>
           </button>
           {serverFolders.map((f) => (
             <button
@@ -328,9 +335,6 @@ export function GalleryViewer(props: {
               onClick={() => selectSidebar(f)}
             >
               {f}
-              <span className="count">
-                {payload.images.filter((img) => img.folder_path === f).length}
-              </span>
             </button>
           ))}
           {adminFolders.length > 0 ? (
@@ -346,7 +350,6 @@ export function GalleryViewer(props: {
                   <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>
                     {f.name}
                   </span>
-                  <span className="count">{f.image_ids.length}</span>
                 </button>
               ))}
             </>
@@ -358,14 +361,13 @@ export function GalleryViewer(props: {
             onClick={() => selectSidebar("__favorites__")}
           >
             Favorites
-            {favCount > 0 ? <span className="count">{favCount}</span> : null}
           </button>
-          <div className="nav-section">My Folders</div>
+          <div className="nav-section">My Albums</div>
           <div className="create-row" style={{ margin: "0 12px 8px", padding: 0 }}>
             <input
               value={newFolderName}
               maxLength={60}
-              placeholder="New folder"
+              placeholder="New album"
               style={{ flex: 1, minWidth: 0 }}
               onChange={(e) => setNewFolderName(e.target.value)}
               onKeyDown={(e) => {
@@ -442,7 +444,6 @@ export function GalleryViewer(props: {
                     <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>
                       {folder.name}
                     </span>
-                    <span className="count">{folder.image_ids.length}</span>
                     <button
                       type="button"
                       className="btn-ghost"
@@ -452,7 +453,7 @@ export function GalleryViewer(props: {
                         setEditingFolder(folder.id);
                         setEditName(folder.name);
                       }}
-                      aria-label="Rename folder"
+                      aria-label="Rename album"
                     >
                       ✎
                     </button>
@@ -465,7 +466,7 @@ export function GalleryViewer(props: {
                         void deleteFolder(folder.id);
                         if (sidebarSelection === folder.id) setSidebarSelection("__all__");
                       }}
-                      aria-label="Delete folder"
+                      aria-label="Delete album"
                     >
                       ×
                     </button>
@@ -484,8 +485,9 @@ export function GalleryViewer(props: {
               onClick={() => {
                 for (const img of favImages) {
                   const url = showWatermark
-                    ? getWatermarkedDownloadUrl(payload.gallery.share_token, img.id)
-                    : img.original_url;
+                    ? getWatermarkedDownloadUrl(payload.gallery.share_token, img.id, { inline: isIos })
+                    : (img.original_url ?? img.preview_url ?? img.thumb_url);
+                  if (!url) continue;
                   void triggerDownload(url);
                 }
               }}
@@ -602,7 +604,7 @@ export function GalleryViewer(props: {
         ) : null}
 
         {/* ── Image grid ── */}
-        <section className="grid">
+        <section className="gallery-grid">
           {images.map((image) => (
             <article
               key={image.id}
@@ -619,7 +621,11 @@ export function GalleryViewer(props: {
                   watermarkAspect={watermarkAspect}
                 />
               ) : (
-                <img src={image.thumb_url} alt="" loading="lazy" />
+                image.thumb_url ? (
+                  <img src={image.thumb_url} alt="" loading="lazy" />
+                ) : (
+                  <div style={{ width: "100%", aspectRatio: "4 / 3", background: "var(--bg-elevated)" }} />
+                )
               )}
 
               {selectMode ? (
@@ -651,7 +657,7 @@ export function GalleryViewer(props: {
                         y: rect.bottom + 4,
                       });
                     }}
-                    title="Add to folder"
+                    title="Add to album"
                   >
                     +
                   </button>
@@ -688,10 +694,10 @@ export function GalleryViewer(props: {
               boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
             }}
           >
-            <h2 style={{ fontSize: 11, marginBottom: 10 }}>Add to folder</h2>
+            <h2 style={{ fontSize: 11, marginBottom: 10 }}>Add to album</h2>
             {folders.length === 0 ? (
               <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                No folders yet.
+                No albums yet.
               </p>
             ) : null}
             {folders.map((f) => (
@@ -705,7 +711,6 @@ export function GalleryViewer(props: {
                 }}
               >
                 {f.name}
-                <span className="count">{f.image_ids.length}</span>
               </button>
             ))}
             <button
@@ -823,7 +828,7 @@ export function GalleryViewer(props: {
               }}
             >
               <img
-                src={lightboxSrc ?? lightboxImage.preview_url}
+                src={lightboxSrc ?? lightboxImage.preview_url ?? lightboxImage.thumb_url ?? lightboxImage.original_url ?? ""}
                 alt=""
                 style={{
                   display: "block",
@@ -926,7 +931,6 @@ export function GalleryViewer(props: {
                     onClick={() => void addSelectionToFolder(folder.id)}
                   >
                     {folder.name}
-                    <span className="count">{folder.image_ids.length}</span>
                   </button>
                 ))}
               </div>
@@ -952,7 +956,7 @@ export function GalleryViewer(props: {
               <li>Tap a photo to view full size.</li>
               <li>Tap the heart to add to favorites.</li>
               <li>Use Select to download or add multiple photos to an album.</li>
-              <li>Use the + icon to organize into folders.</li>
+              <li>Use the + icon to add a photo to one of your albums.</li>
             </ul>
             <div className="modal-actions" style={{ marginTop: 16 }}>
               <button className="btn-primary" onClick={() => setInfoOpen(false)}>

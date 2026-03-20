@@ -37,6 +37,8 @@ export const imageAssets = pgTable("image_assets", {
   id: text("id").primaryKey(),
   galleryId: text("gallery_id").notNull().references(() => galleries.id, { onDelete: "cascade" }),
   folderPath: text("folder_path").notNull(),
+  originalFilename: text("original_filename"),
+  contentType: text("content_type"),
   originalKey: text("original_key").notNull(),
   thumbKey: text("thumb_key"),
   previewKey: text("preview_key"),

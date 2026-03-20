@@ -28,18 +28,21 @@ export interface ImageAsset {
   id: string;
   gallery_id: string;
   folder_path: string;
+  original_filename?: string | null;
+  content_type?: string | null;
   original_key: string;
-  thumb_key: string;
-  preview_key: string;
+  thumb_key: string | null;
+  preview_key: string | null;
   watermarked_thumb_key: string | null;
   watermarked_preview_key: string | null;
   created_at: number;
   taken_at: number | null;
   preview_width?: number | null;
   preview_height?: number | null;
-  thumb_url: string;
-  preview_url: string;
-  original_url: string;
+  thumb_url: string | null;
+  preview_url: string | null;
+  original_url: string | null;
+  processing_status?: "pending" | "completed";
 }
 
 export interface PersonCluster {

@@ -5,6 +5,11 @@ import { logger } from "../logger.js";
 const jobPayloadSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("process_image"), imageId: z.string(), galleryId: z.string() }),
     z.object({ type: z.literal("index_faces"), galleryId: z.string(), imageIds: z.array(z.string()) }),
+    z.object({
+        type: z.literal("regenerate_thumbnail"),
+        imageId: z.string(),
+        galleryId: z.string(),
+    }),
 ]);
 const messageBodySchema = z.object({
     id: z.string(),

@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { getJobQueue } from "../jobs/queue.js";
 import { getFaceProvider } from "../faces/index.js";
-import { processImageJob } from "./processImage.js";
+import { processImageJob, regenerateThumbnailJob } from "./processImage.js";
 import { runIndexFacesJob } from "./indexFaces.js";
 import { logger } from "../logger.js";
 const POLL_BACKOFF_MS = 2000;
@@ -34,6 +34,9 @@ export async function runWorker() {
             }
             else if (payload.type === "index_faces") {
                 await runIndexFacesJob(payload, faceProvider);
+            }
+            else if (payload.type === "regenerate_thumbnail") {
+                await regenerateThumbnailJob(payload);
             }
             await queue.ack(id);
             logger.info("Job completed", { jobId: id, type: payload.type });

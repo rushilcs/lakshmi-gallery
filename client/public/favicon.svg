@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Replace with your official Lakshmi black logo asset if you have a vector version. -->
+  <path
+    fill="#0a0a0a"
+    fill-rule="evenodd"
+    d="M6 25V7h3v15h14v3H6Zm17-14.2c0-3.5 2.9-6.3 6.4-6.3.4 0 .7 0 1 .1v2.9c-.3-.1-.6-.1-.9-.1-2 0-3.5 1.6-3.5 3.6v3.5h3.4v2.6h-3.4V25h-3.1v-8.5h-2.5v-2.6h2.5v-3.6Z"
+  />
+</svg>

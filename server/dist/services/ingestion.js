@@ -118,6 +118,8 @@ export async function regenerateWatermarkedDerivatives(gallery_id, galleryOverri
         y_pct_portrait: gallery.watermark_y_pct_portrait,
     };
     for (const image of images) {
+        if (!image.thumb_key || !image.preview_key)
+            continue;
         const thumb = await readBufferFromStorage(image.thumb_key);
         const preview = await readBufferFromStorage(image.preview_key);
         if (!thumb || !preview)
@@ -143,9 +145,12 @@ export async function regenerateWatermarkedDerivatives(gallery_id, galleryOverri
 }
 export async function signedUrlsForImage(input) {
     // Always serve raw images; watermark is overlaid at display/download time
+    const original_url = input.original_key ? await getSignedViewUrl(input.original_key) : null;
+    const preview_url = input.preview_key ? await getSignedViewUrl(input.preview_key) : null;
+    const thumb_url = input.thumb_key ? await getSignedViewUrl(input.thumb_key) : null;
     return {
-        thumb_url: await getSignedViewUrl(input.thumb_key),
-        preview_url: await getSignedViewUrl(input.preview_key),
-        original_url: await getSignedViewUrl(input.original_key),
+        thumb_url,
+        preview_url,
+        original_url,
     };
 }

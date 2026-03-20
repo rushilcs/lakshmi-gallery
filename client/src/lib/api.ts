@@ -45,12 +45,20 @@ export async function createAdminGallery(input: {
   title: string;
   event_date: string;
   watermark_asset_key?: string;
-}): Promise<void> {
+}): Promise<{ gallery: { id: string; title: string; share_token: string } }> {
   const response = await fetch(`${API_BASE}/admin/galleries`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+  });
+  return parseJson(response);
+}
+
+export async function deleteAdminGallery(galleryId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/admin/galleries/${galleryId}`, {
+    method: "DELETE",
+    credentials: "include",
   });
   await parseJson(response);
 }
@@ -82,6 +90,36 @@ export async function setCoverImage(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ cover_image_id }),
   });
+  await parseJson(response);
+}
+
+export async function deleteGalleryImages(
+  galleryId: string,
+  imageIds: string[],
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/admin/galleries/${galleryId}/images/delete`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image_ids: imageIds }),
+  });
+  await parseJson(response);
+}
+
+export async function addImageToAlbum(
+  galleryId: string,
+  folderId: string,
+  imageId: string,
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/admin/galleries/${galleryId}/folders/${folderId}/images`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image_id: imageId }),
+    },
+  );
   await parseJson(response);
 }
 
@@ -153,6 +191,25 @@ export async function renameFolder(
     },
   );
   await parseJson(response);
+}
+
+export async function reorderAdminFolders(
+  galleryId: string,
+  folderIds: string[],
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/admin/galleries/${galleryId}/folders/order`,
+    {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folder_ids: folderIds }),
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || "Could not reorder folders");
+  }
 }
 
 export async function setFolderImages(
@@ -229,11 +286,15 @@ export async function requestUploadPresign(input: {
   files: Array<{ file_name: string; content_type: string; relative_path: string }>;
 }): Promise<{
   uploads: Array<{
+    photo_id: string;
+    original_filename: string;
+    s3_key_original?: string;
     file_name: string;
     relative_path: string;
     folder_path: string;
     original_key: string;
     upload_url: string;
+    content_type: string;
   }>;
   rejected: Array<{ relative_path: string; reason: string }>;
 }> {
@@ -248,7 +309,14 @@ export async function requestUploadPresign(input: {
 
 export async function completeUpload(input: {
   gallery_id: string;
-  uploaded: Array<{ original_key: string; folder_path: string; content_type: string }>;
+  uploaded: Array<{
+    photo_id: string;
+    original_filename: string;
+    s3_key_original: string;
+    original_key: string;
+    folder_path: string;
+    content_type: string;
+  }>;
 }): Promise<void> {
   const response = await fetch(`${API_BASE}/upload/complete`, {
     method: "POST",
@@ -279,7 +347,12 @@ export async function previewGallery(
   return parseJson(response);
 }
 
-export function getWatermarkedDownloadUrl(shareToken: string, imageId: string): string {
+export function getWatermarkedDownloadUrl(
+  shareToken: string,
+  imageId: string,
+  options?: { inline?: boolean },
+): string {
   const base = API_BASE;
-  return `${base}/gallery/g/${shareToken}/images/${imageId}/download`;
+  const inlineQuery = options?.inline ? "?inline=1" : "";
+  return `${base}/gallery/g/${shareToken}/images/${imageId}/download${inlineQuery}`;
 }

@@ -98,6 +98,7 @@ galleryRouter.get("/g/:share_token/images/:image_id/download", async (req, res) 
         res.status(404).send("Image not found");
         return;
     }
+    const inline = typeof req.query.inline === "string" && req.query.inline === "1";
     if (gallery.watermark_enabled && gallery.watermark_asset_key) {
         const wm = await readBufferFromStorage(gallery.watermark_asset_key);
         if (wm) {
@@ -113,7 +114,12 @@ galleryRouter.get("/g/:share_token/images/:image_id/download", async (req, res) 
             });
             const filename = image.original_key.split("/").pop() ?? "photo.jpg";
             res.setHeader("Content-Type", "image/jpeg");
-            res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+            if (inline) {
+                res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+            }
+            else {
+                res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+            }
             res.send(composited);
             return;
         }

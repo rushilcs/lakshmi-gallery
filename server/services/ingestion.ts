@@ -142,6 +142,7 @@ export async function regenerateWatermarkedDerivatives(
     y_pct_portrait: gallery.watermark_y_pct_portrait,
   };
   for (const image of images) {
+    if (!image.thumb_key || !image.preview_key) continue;
     const thumb = await readBufferFromStorage(image.thumb_key);
     const preview = await readBufferFromStorage(image.preview_key);
     if (!thumb || !preview) continue;
@@ -167,17 +168,24 @@ export async function regenerateWatermarkedDerivatives(
 }
 
 export async function signedUrlsForImage(input: {
-  thumb_key: string;
-  preview_key: string;
-  original_key: string;
+  thumb_key: string | null;
+  preview_key: string | null;
+  original_key: string | null;
   watermarked_thumb_key: string | null;
   watermarked_preview_key: string | null;
   watermark_enabled: boolean;
-}): Promise<{ thumb_url: string; preview_url: string; original_url: string }> {
+}): Promise<{
+  thumb_url: string | null;
+  preview_url: string | null;
+  original_url: string | null;
+}> {
   // Always serve raw images; watermark is overlaid at display/download time
+  const original_url = input.original_key ? await getSignedViewUrl(input.original_key) : null;
+  const preview_url = input.preview_key ? await getSignedViewUrl(input.preview_key) : null;
+  const thumb_url = input.thumb_key ? await getSignedViewUrl(input.thumb_key) : null;
   return {
-    thumb_url: await getSignedViewUrl(input.thumb_key),
-    preview_url: await getSignedViewUrl(input.preview_key),
-    original_url: await getSignedViewUrl(input.original_key),
+    thumb_url,
+    preview_url,
+    original_url,
   };
 }

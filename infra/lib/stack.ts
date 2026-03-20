@@ -155,13 +155,47 @@ export class LakshmiGalleryStack extends cdk.Stack {
       assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
     });
     jobQueue.grantSendMessages(apiTaskRole);
-    mediaBucket.grantRead(apiTaskRole);
+    apiTaskRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:AbortMultipartUpload",
+          "s3:ListMultipartUploadParts",
+        ],
+        resources: [mediaBucket.arnForObjects("galleries/*")],
+      }),
+    );
+    apiTaskRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["s3:ListBucketMultipartUploads"],
+        resources: [mediaBucket.bucketArn],
+      }),
+    );
 
     // ── Worker task role ──
     const workerTaskRole = new iam.Role(this, "WorkerTaskRole", {
       assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
     });
-    mediaBucket.grantReadWrite(workerTaskRole);
+    workerTaskRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:AbortMultipartUpload",
+          "s3:ListMultipartUploadParts",
+        ],
+        resources: [mediaBucket.arnForObjects("galleries/*")],
+      }),
+    );
+    workerTaskRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["s3:ListBucketMultipartUploads"],
+        resources: [mediaBucket.bucketArn],
+      }),
+    );
     jobQueue.grantConsumeMessages(workerTaskRole);
     workerTaskRole.addToPolicy(
       new iam.PolicyStatement({

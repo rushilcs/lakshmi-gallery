@@ -8,9 +8,11 @@ export interface ImageAsset {
   id: string;
   gallery_id: string;
   folder_path: string;
+  original_filename: string | null;
+  content_type: string | null;
   original_key: string;
-  thumb_key: string;
-  preview_key: string;
+  thumb_key: string | null;
+  preview_key: string | null;
   watermarked_thumb_key: string | null;
   watermarked_preview_key: string | null;
   created_at: number;
@@ -25,9 +27,11 @@ function rowToImage(row: typeof imageAssets.$inferSelect): ImageAsset {
     id: row.id,
     gallery_id: row.galleryId,
     folder_path: row.folderPath,
+    original_filename: row.originalFilename ?? null,
+    content_type: row.contentType ?? null,
     original_key: row.originalKey,
-    thumb_key: row.thumbKey ?? row.originalKey,
-    preview_key: row.previewKey ?? row.originalKey,
+    thumb_key: row.thumbKey ?? null,
+    preview_key: row.previewKey ?? null,
     watermarked_thumb_key: row.watermarkedThumbKey,
     watermarked_preview_key: row.watermarkedPreviewKey,
     created_at: row.createdAt,
@@ -53,8 +57,11 @@ const sortClause = (sort: DefaultSort) => {
 };
 
 export async function createImageAsset(input: {
+  id?: string;
   gallery_id: string;
   folder_path: string;
+  original_filename?: string | null;
+  content_type?: string | null;
   original_key: string;
   thumb_key?: string | null;
   preview_key?: string | null;
@@ -65,12 +72,14 @@ export async function createImageAsset(input: {
   preview_height?: number | null;
   processing_status?: "pending" | "completed";
 }): Promise<ImageAsset> {
-  const id = randomUUID();
+  const id = input.id ?? randomUUID();
   const created_at = Date.now();
   await getDb().insert(imageAssets).values({
     id,
     galleryId: input.gallery_id,
     folderPath: input.folder_path,
+    originalFilename: input.original_filename ?? null,
+    contentType: input.content_type ?? null,
     originalKey: input.original_key,
     thumbKey: input.thumb_key ?? null,
     previewKey: input.preview_key ?? null,
@@ -137,4 +146,18 @@ export async function updateWatermarkedKeys(input: {
       watermarkedPreviewKey: input.watermarked_preview_key,
     })
     .where(eq(imageAssets.id, input.image_id));
+}
+
+export async function updateImageThumbKey(input: {
+  image_id: string;
+  thumb_key: string;
+}): Promise<void> {
+  await getDb()
+    .update(imageAssets)
+    .set({ thumbKey: input.thumb_key })
+    .where(eq(imageAssets.id, input.image_id));
+}
+
+export async function deleteImageById(imageId: string): Promise<void> {
+  await getDb().delete(imageAssets).where(eq(imageAssets.id, imageId));
 }

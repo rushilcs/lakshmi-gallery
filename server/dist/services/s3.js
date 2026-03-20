@@ -1,14 +1,27 @@
 import path from "node:path";
-import { GetObjectCommand, PutObjectCommand, S3Client, } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client, } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getSignedUrl as getSignedCloudfrontUrl } from "@aws-sdk/cloudfront-signer";
 import { config, isCloudfrontReady } from "../src/config.js";
+import { logger } from "../src/logger.js";
+import { buildCloudfrontResourceUrl, encodeCloudfrontPathFromS3Key, } from "../src/cloudfrontPath.js";
 let s3Client = null;
+let s3PresignClient = null;
 function client() {
     if (!s3Client) {
         s3Client = new S3Client({ region: config.AWS_REGION });
     }
     return s3Client;
+}
+function presignClient() {
+    if (!s3PresignClient) {
+        s3PresignClient = new S3Client({
+            region: config.AWS_REGION,
+            requestChecksumCalculation: "WHEN_REQUIRED",
+            responseChecksumValidation: "WHEN_REQUIRED",
+        });
+    }
+    return s3PresignClient;
 }
 function localPathForKey(key) {
     return path.join(process.cwd(), ".local-assets", key);
@@ -20,17 +33,30 @@ export async function getSignedPutUploadUrl(input) {
     if (!isS3Ready()) {
         return `/api/upload/local-put/${encodeURIComponent(input.key)}`;
     }
+    const bucket = config.S3_BUCKET;
+    const region = config.AWS_REGION;
+    logger.debug("presign PUT", { bucket, key: input.key, region, contentType: input.contentType });
     const command = {
-        Bucket: config.S3_BUCKET,
+        Bucket: bucket,
         Key: input.key,
-        ContentType: input.contentType,
     };
-    return getSignedUrl(client(), new PutObjectCommand(command), { expiresIn: 600 });
+    const url = await getSignedUrl(presignClient(), new PutObjectCommand(command), {
+        expiresIn: 600,
+    });
+    logger.debug("presign result", { hasChecksum: url.toLowerCase().includes("checksum") });
+    return url;
 }
 export async function getSignedViewUrl(key) {
     if (isCloudfrontReady() && config.CLOUDFRONT_DOMAIN) {
+        const encodedPath = encodeCloudfrontPathFromS3Key(key);
+        const resourceUrl = buildCloudfrontResourceUrl(config.CLOUDFRONT_DOMAIN, key);
+        logger.debug("cloudfront sign input", {
+            s3Key: key,
+            encodedPath,
+            resourceUrl,
+        });
         return getSignedCloudfrontUrl({
-            url: `https://${config.CLOUDFRONT_DOMAIN.replace(/^https?:\/\//, "")}/${key}`,
+            url: resourceUrl,
             keyPairId: config.CLOUDFRONT_KEY_PAIR_ID,
             dateLessThan: new Date(Date.now() + 1000 * 60 * 30).toISOString(),
             privateKey: config.CLOUDFRONT_PRIVATE_KEY,
@@ -54,6 +80,7 @@ export async function uploadBufferToStorage(input) {
         Key: input.key,
         Body: input.body,
         ContentType: input.contentType,
+        CacheControl: input.cacheControl,
     }));
 }
 export async function readBufferFromStorage(key) {
@@ -71,4 +98,17 @@ export async function readBufferFromStorage(key) {
         return null;
     const bytes = await output.Body.transformToByteArray();
     return Buffer.from(bytes);
+}
+export async function deleteObjectFromStorage(key) {
+    if (!isS3Ready()) {
+        try {
+            const fs = await import("node:fs/promises");
+            await fs.unlink(localPathForKey(key));
+        }
+        catch {
+            // Ignore local missing files for idempotent delete behavior.
+        }
+        return;
+    }
+    await client().send(new DeleteObjectCommand({ Bucket: config.S3_BUCKET, Key: key }));
 }

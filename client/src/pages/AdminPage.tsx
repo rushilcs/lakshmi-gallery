@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   adminLogin,
   adminLogout,
   adminSession,
   createAdminGallery,
+  deleteAdminGallery,
   listAdminGalleries,
 } from "../lib/api";
 
@@ -18,6 +19,7 @@ interface AdminGalleryRow {
 }
 
 export function AdminPage() {
+  const navigate = useNavigate();
   const [password, setPassword] = useState("");
   const [authed, setAuthed] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,6 +27,8 @@ export function AdminPage() {
   const [title, setTitle] = useState("");
   const [eventDate, setEventDate] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
+  const [createFormOpen, setCreateFormOpen] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const load = async (): Promise<void> => {
     try {
@@ -51,7 +55,10 @@ export function AdminPage() {
           onSubmit={(e) => {
             e.preventDefault();
             void adminLogin({ password })
-              .then(() => load())
+              .then(() => {
+                setError(null);
+                return load();
+              })
               .catch(() => setError("Invalid credentials"));
           }}
         >
@@ -84,37 +91,69 @@ export function AdminPage() {
         </button>
       </div>
 
-      <form
-        className="create-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void createAdminGallery({ title, event_date: eventDate }).then(() => {
-            setTitle("");
-            setEventDate("");
-            return load();
-          });
-        }}
-      >
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Gallery title"
-          required
-        />
-        <input
-          type="date"
-          value={eventDate}
-          onChange={(e) => setEventDate(e.target.value)}
-          required
-        />
-        <button type="submit" className="btn-primary">
-          Create Gallery
+      {!createFormOpen ? (
+        <button
+          type="button"
+          className="btn-primary"
+          style={{ marginBottom: 16 }}
+          onClick={() => {
+            setCreateError(null);
+            setCreateFormOpen(true);
+          }}
+        >
+          New gallery
         </button>
-      </form>
+      ) : (
+        <form
+          className="create-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setCreateError(null);
+            void createAdminGallery({ title, event_date: eventDate })
+              .then((res) => {
+                setTitle("");
+                setEventDate("");
+                setCreateFormOpen(false);
+                void load();
+                navigate(`/admin/gallery/${res.gallery.id}`);
+              })
+              .catch(() => setCreateError("Could not create gallery"));
+          }}
+        >
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => {
+              setCreateFormOpen(false);
+              setCreateError(null);
+              setTitle("");
+              setEventDate("");
+            }}
+          >
+            ← Back
+          </button>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Gallery title"
+            required
+          />
+          <input
+            type="date"
+            value={eventDate}
+            onChange={(e) => setEventDate(e.target.value)}
+            required
+          />
+          <button type="submit" className="btn-primary">
+            Create Gallery
+          </button>
+        </form>
+      )}
+      {createError ? <p className="error" style={{ marginTop: 8 }}>{createError}</p> : null}
 
       {rows.length === 0 ? (
         <p style={{ color: "var(--text-muted)", fontSize: 13, paddingTop: 20 }}>
-          No galleries yet. Create one above.
+          No galleries yet. Click “New gallery” to create one.
         </p>
       ) : (
         <table className="gallery-table">
@@ -168,6 +207,17 @@ export function AdminPage() {
                       }}
                     >
                       {copied === g.id ? "Copied!" : "Copy Link"}
+                    </button>
+                    <button
+                      className="btn-ghost"
+                      onClick={() => {
+                        if (!confirm(`Delete gallery "${g.title}" and all its photos from storage?`)) {
+                          return;
+                        }
+                        void deleteAdminGallery(g.id).then(() => load());
+                      }}
+                    >
+                      Delete Gallery
                     </button>
                   </div>
                 </td>

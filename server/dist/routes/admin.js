@@ -1,13 +1,15 @@
 import { Router } from "express";
 import { z } from "zod";
 import { config } from "../src/config.js";
+import { logger } from "../src/logger.js";
+import { getJobQueue } from "../src/jobs/queue.js";
 import { adminAuth, clearAdminSession, issueAdminSession, } from "../middleware/adminAuth.js";
-import { createGallery, getGalleryById, listGalleries, setGalleryCover, setGalleryDefaultSort, setGalleryPublish, setGalleryWatermarkAsset, setGalleryWatermarkEnabled, setGalleryWatermarkPosition, } from "../models/gallery.js";
+import { createGallery, deleteGalleryById, getGalleryById, listGalleries, setGalleryCover, setGalleryDefaultSort, setGalleryPublish, setGalleryWatermarkAsset, setGalleryWatermarkEnabled, setGalleryWatermarkPosition, } from "../models/gallery.js";
 import { addImageToFolder, createFolder, deleteFolder, getImageIdsForFolder, listFoldersByGallery, removeImageFromFolder, renameFolder, setFolderImages, } from "../models/folder.js";
-import { listImagesByGallery } from "../models/image.js";
+import { deleteImageById, listImagesByGallery } from "../models/image.js";
 import { listPersonClustersByGallery } from "../models/person.js";
 import { signedUrlsForImage } from "../services/ingestion.js";
-import { getSignedPutUploadUrl, getSignedViewUrl } from "../services/s3.js";
+import { deleteObjectFromStorage, getSignedPutUploadUrl, getSignedViewUrl, } from "../services/s3.js";
 const loginSchema = z.object({
     password: z.string().min(1),
 });
@@ -36,6 +38,9 @@ const wmPresignSchema = z.object({
     file_name: z.string().min(1),
     content_type: z.string().trim().optional(),
 });
+const deleteImagesSchema = z.object({
+    image_ids: z.array(z.string().uuid()).min(1),
+});
 const IMAGE_EXTENSIONS = new Set([
     "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "tif",
     "heic", "heif", "avif", "svg", "ico",
@@ -46,6 +51,15 @@ function isImageFile(mimetype, filename) {
         return true;
     const ext = filename.split(".").pop()?.toLowerCase() ?? "";
     return IMAGE_EXTENSIONS.has(ext);
+}
+function keysForImageCleanup(image) {
+    return [
+        image.original_key,
+        image.thumb_key,
+        image.preview_key,
+        image.watermarked_thumb_key,
+        image.watermarked_preview_key,
+    ].filter((key) => Boolean(key));
 }
 async function buildAdminGalleryPayload(galleryId) {
     const gallery = await getGalleryById(galleryId);
@@ -124,6 +138,122 @@ adminRouter.get("/galleries/:galleryId", async (req, res) => {
         return;
     }
     res.json(payload);
+});
+async function handleDeleteGalleryImages(req, res) {
+    const galleryId = typeof req.params.galleryId === "string" ? req.params.galleryId : "";
+    const parsed = deleteImagesSchema.safeParse(req.body);
+    if (!parsed.success) {
+        res.status(400).json({ error: "Invalid payload" });
+        return;
+    }
+    const gallery = await getGalleryById(galleryId);
+    if (!gallery) {
+        res.status(404).json({ error: "Gallery not found" });
+        return;
+    }
+    const allImages = await listImagesByGallery(galleryId, "uploaded_desc");
+    const targets = allImages.filter((image) => parsed.data.image_ids.includes(image.id));
+    if (targets.length === 0) {
+        res.status(404).json({ error: "No matching images found in gallery" });
+        return;
+    }
+    let deleted = 0;
+    const failedImageIds = [];
+    for (const image of targets) {
+        const keys = keysForImageCleanup(image);
+        let failed = false;
+        for (const key of keys) {
+            try {
+                await deleteObjectFromStorage(key);
+            }
+            catch (err) {
+                failed = true;
+                logger.error("Failed deleting image object from storage", {
+                    galleryId,
+                    imageId: image.id,
+                    key,
+                    error: String(err),
+                });
+            }
+        }
+        if (failed) {
+            failedImageIds.push(image.id);
+            continue;
+        }
+        await deleteImageById(image.id);
+        deleted += 1;
+    }
+    logger.info("Admin deleted gallery images", {
+        galleryId,
+        requested: parsed.data.image_ids.length,
+        deleted,
+        failed: failedImageIds.length,
+    });
+    if (failedImageIds.length > 0) {
+        res.status(500).json({
+            error: "Failed deleting one or more images from storage.",
+            requested: parsed.data.image_ids.length,
+            deleted,
+            failed_image_ids: failedImageIds,
+        });
+        return;
+    }
+    res.json({ ok: true, requested: parsed.data.image_ids.length, deleted });
+}
+adminRouter.delete("/galleries/:galleryId/images", (req, res) => {
+    void handleDeleteGalleryImages(req, res);
+});
+adminRouter.post("/galleries/:galleryId/images/delete", (req, res) => {
+    void handleDeleteGalleryImages(req, res);
+});
+adminRouter.delete("/galleries/:galleryId", async (req, res) => {
+    const galleryId = typeof req.params.galleryId === "string" ? req.params.galleryId : "";
+    const gallery = await getGalleryById(galleryId);
+    if (!gallery) {
+        res.status(404).json({ error: "Gallery not found" });
+        return;
+    }
+    const images = await listImagesByGallery(galleryId, "uploaded_desc");
+    let storageFailed = false;
+    for (const image of images) {
+        const keys = keysForImageCleanup(image);
+        for (const key of keys) {
+            try {
+                await deleteObjectFromStorage(key);
+            }
+            catch (err) {
+                storageFailed = true;
+                logger.error("Failed deleting gallery object from storage", {
+                    galleryId,
+                    imageId: image.id,
+                    key,
+                    error: String(err),
+                });
+            }
+        }
+    }
+    if (gallery.watermark_asset_key) {
+        try {
+            await deleteObjectFromStorage(gallery.watermark_asset_key);
+        }
+        catch (err) {
+            storageFailed = true;
+            logger.error("Failed deleting gallery watermark object from storage", {
+                galleryId,
+                key: gallery.watermark_asset_key,
+                error: String(err),
+            });
+        }
+    }
+    if (storageFailed) {
+        res.status(500).json({
+            error: "Failed deleting one or more objects from storage. Gallery was not deleted.",
+        });
+        return;
+    }
+    await deleteGalleryById(galleryId);
+    logger.info("Admin deleted gallery", { galleryId, imageCount: images.length });
+    res.json({ ok: true, galleryId, image_count: images.length });
 });
 adminRouter.post("/galleries/:galleryId/publish", async (req, res) => {
     const parsed = publishSchema.safeParse(req.body);
@@ -250,4 +380,51 @@ adminRouter.put("/galleries/:galleryId/folders/:folderId/images", async (req, re
     }
     await setFolderImages(req.params.folderId, parsed.data.image_ids);
     res.json({ ok: true });
+});
+adminRouter.post("/galleries/:galleryId/rebuild-thumbnails", async (req, res) => {
+    const galleryId = typeof req.params.galleryId === "string" ? req.params.galleryId : "";
+    const gallery = await getGalleryById(galleryId);
+    if (!gallery) {
+        res.status(404).json({ error: "Gallery not found" });
+        return;
+    }
+    const images = await listImagesByGallery(galleryId, "uploaded_desc");
+    const queue = getJobQueue();
+    let enqueued = 0;
+    let failed = 0;
+    logger.info("Rebuild thumbnails started", {
+        galleryId,
+        total: images.length,
+    });
+    for (const image of images) {
+        try {
+            await queue.enqueue({
+                type: "regenerate_thumbnail",
+                imageId: image.id,
+                galleryId,
+            });
+            enqueued += 1;
+            logger.info("Rebuild thumbnail enqueued", {
+                galleryId,
+                imageId: image.id,
+                status: "success",
+            });
+        }
+        catch (err) {
+            failed += 1;
+            logger.error("Failed to enqueue regenerate_thumbnail job", {
+                galleryId,
+                imageId: image.id,
+                status: "failed",
+                error: String(err),
+            });
+        }
+    }
+    logger.info("Rebuild thumbnails requested", {
+        galleryId,
+        total: images.length,
+        enqueued,
+        failed,
+    });
+    res.json({ ok: failed === 0, galleryId, total: images.length, enqueued, failed });
 });

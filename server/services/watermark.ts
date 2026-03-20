@@ -3,8 +3,19 @@ import sharp from "sharp";
 export async function createThumbnail(original: Buffer): Promise<Buffer> {
   return sharp(original)
     .rotate()
-    .resize({ width: 512, withoutEnlargement: true })
-    .jpeg({ quality: 86 })
+    .resize({
+      width: 1200,
+      height: 1200,
+      fit: "inside",
+      kernel: sharp.kernel.lanczos3,
+      withoutEnlargement: true,
+    })
+    .sharpen(0.5)
+    .jpeg({
+      quality: 85,
+      chromaSubsampling: "4:4:4",
+      mozjpeg: true,
+    })
     .toBuffer();
 }
 

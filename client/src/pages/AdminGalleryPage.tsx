@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
+  addImageToAlbum,
   adminGallery,
   createFolder,
+  deleteGalleryImages,
   deleteFolder,
   publishGallery,
+  renameFolder,
   setCoverImage,
   setDefaultSort,
   setFolderImages,
@@ -15,7 +18,7 @@ import {
 } from "../lib/api";
 import type { DefaultSort, GalleryPayload } from "../types";
 
-type Section = "content" | "albums" | "settings" | "watermark" | "publish";
+type Section = "content" | "folders" | "settings" | "watermark" | "publish";
 type AdminPayload = GalleryPayload & { watermark_url?: string | null };
 
 type WmPosition = { scale: number; x_pct: number; y_pct: number };
@@ -27,9 +30,15 @@ export function AdminGalleryPage() {
   const [error, setError] = useState<string | null>(null);
   const [section, setSection] = useState<Section>("content");
   const [coverMode, setCoverMode] = useState(false);
+  const [contentSelectMode, setContentSelectMode] = useState(false);
+  const [contentSelectedIds, setContentSelectedIds] = useState<Set<string>>(new Set());
+  const [contentMenu, setContentMenu] = useState<{ imageId: string; x: number; y: number } | null>(null);
+  const [contentMenuAlbumsOpen, setContentMenuAlbumsOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [wmSaving, setWmSaving] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  const [editingAdminFolderId, setEditingAdminFolderId] = useState<string | null>(null);
+  const [editAdminFolderName, setEditAdminFolderName] = useState("");
   const [albumSelectMode, setAlbumSelectMode] = useState(false);
   const [albumSelectedIds, setAlbumSelectedIds] = useState<Set<string>>(new Set());
   const [addToAlbumId, setAddToAlbumId] = useState<string | null>(null);
@@ -69,6 +78,23 @@ export function AdminGalleryPage() {
       setError(String(e));
     }
   };
+
+  const deleteSelectedContentImages = useCallback(async () => {
+    if (contentSelectedIds.size === 0) return;
+    const imageIds = Array.from(contentSelectedIds);
+    if (!confirm(`Delete ${imageIds.length} selected photo(s) from gallery and storage?`)) {
+      return;
+    }
+    try {
+      await deleteGalleryImages(id, imageIds);
+      setContentSelectedIds(new Set());
+      setContentSelectMode(false);
+      setError(null);
+      await load();
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [contentSelectedIds, id]);
 
   useEffect(() => {
     void load();
@@ -161,7 +187,7 @@ export function AdminGalleryPage() {
           {(
             [
               ["content", "Content"],
-              ["albums", "Albums"],
+              ["folders", "Folders"],
               ["settings", "Settings"],
               ["watermark", "Watermark"],
               ["publish", "Publish"],
@@ -179,6 +205,11 @@ export function AdminGalleryPage() {
 
         {/* ── Right panel ── */}
         <div>
+          {error ? (
+            <p className="error" style={{ marginBottom: 12 }}>
+              {error}
+            </p>
+          ) : null}
           {/* CONTENT */}
           {section === "content" ? (
             <div className="settings-panel">
@@ -226,6 +257,37 @@ export function AdminGalleryPage() {
                 </button>
               </div>
 
+              <div className="settings-row">
+                <div>
+                  <div className="label">Delete Photos</div>
+                  <div className="hint">
+                    Select multiple photos, then delete them from the gallery.
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <button
+                    className={contentSelectMode ? "btn-primary" : "btn-secondary"}
+                    onClick={() => {
+                      setContentMenu(null);
+                      setContentMenuAlbumsOpen(false);
+                      setCoverMode(false);
+                      setContentSelectMode((prev) => !prev);
+                      if (contentSelectMode) setContentSelectedIds(new Set());
+                    }}
+                  >
+                    {contentSelectMode ? "Cancel Select" : "Select"}
+                  </button>
+                  {contentSelectMode && contentSelectedIds.size > 0 ? (
+                    <button
+                      className="btn-primary"
+                      onClick={() => void deleteSelectedContentImages()}
+                    >
+                      Delete Selected ({contentSelectedIds.size})
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
               {/* Image grid for cover selection */}
               {images.length > 0 ? (
                 <section className="grid" style={{ marginTop: 24 }}>
@@ -233,39 +295,169 @@ export function AdminGalleryPage() {
                     <article
                       key={image.id}
                       className={`image-card${coverMode ? " cover-candidate" : ""}`}
+                      style={{ position: "relative", cursor: contentSelectMode ? "pointer" : undefined }}
                       onClick={() => {
+                        if (contentSelectMode) {
+                          setContentSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(image.id)) next.delete(image.id);
+                            else next.add(image.id);
+                            return next;
+                          });
+                          return;
+                        }
                         if (!coverMode) return;
                         void setCoverImage(gallery.id, image.id).then(() => {
                           setCoverMode(false);
                           load();
                         });
                       }}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setContentMenu({
+                          imageId: image.id,
+                          x: e.clientX,
+                          y: e.clientY,
+                        });
+                        setContentMenuAlbumsOpen(false);
+                      }}
                     >
-                      <img src={image.thumb_url} alt="" loading="lazy" />
+                      <img src={image.thumb_url ?? image.preview_url ?? image.original_url ?? ""} alt="" loading="lazy" />
                       {gallery.cover_image_id === image.id ? (
                         <span className="cover-badge">Cover</span>
+                      ) : null}
+                      {contentSelectMode ? (
+                        <div
+                          style={{
+                            position: "absolute",
+                            top: 8,
+                            left: 8,
+                            width: 22,
+                            height: 22,
+                            borderRadius: 4,
+                            border: "2px solid #fff",
+                            background: contentSelectedIds.has(image.id) ? "var(--accent)" : "rgba(0,0,0,0.4)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: 12,
+                            color: "#fff",
+                            fontWeight: "bold",
+                          }}
+                        >
+                          {contentSelectedIds.has(image.id) ? "✓" : ""}
+                        </div>
                       ) : null}
                     </article>
                   ))}
                 </section>
               ) : null}
+              {contentMenu ? (
+                <>
+                  <div
+                    style={{ position: "fixed", inset: 0, zIndex: 70 }}
+                    onClick={() => {
+                      setContentMenu(null);
+                      setContentMenuAlbumsOpen(false);
+                    }}
+                  />
+                  <div
+                    className="modal"
+                    style={{
+                      position: "fixed",
+                      left: Math.min(contentMenu.x, window.innerWidth - 180),
+                      top: Math.min(contentMenu.y, window.innerHeight - 80),
+                      width: 170,
+                      padding: 10,
+                      zIndex: 71,
+                    }}
+                    onMouseLeave={() => setContentMenuAlbumsOpen(false)}
+                  >
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      style={{ width: "100%", textAlign: "left" }}
+                      onMouseEnter={() => setContentMenuAlbumsOpen(true)}
+                    >
+                      Add to folder ▸
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      style={{ width: "100%", textAlign: "left" }}
+                      onClick={() => {
+                        const imageId = contentMenu.imageId;
+                        setContentMenu(null);
+                        setContentMenuAlbumsOpen(false);
+                        if (!confirm("Delete this photo from gallery and storage?")) return;
+                        void deleteGalleryImages(gallery.id, [imageId])
+                          .then(() => load())
+                          .catch((e) => setError(String(e)));
+                      }}
+                    >
+                      Delete photo
+                    </button>
+                    {contentMenuAlbumsOpen ? (
+                      <div
+                        className="modal"
+                        style={{
+                          position: "absolute",
+                          left: "calc(100% + 6px)",
+                          top: 8,
+                          width: 200,
+                          padding: 10,
+                          zIndex: 72,
+                          maxHeight: 280,
+                          overflowY: "auto",
+                        }}
+                        onMouseEnter={() => setContentMenuAlbumsOpen(true)}
+                      >
+                        {(adminPayload.admin_folders ?? []).length === 0 ? (
+                          <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>
+                            No folders yet
+                          </p>
+                        ) : (
+                          (adminPayload.admin_folders ?? []).map((folder) => (
+                            <button
+                              key={folder.id}
+                              type="button"
+                              className="btn-ghost"
+                              style={{ width: "100%", textAlign: "left" }}
+                              onClick={() => {
+                                const imageId = contentMenu.imageId;
+                                void addImageToAlbum(gallery.id, folder.id, imageId)
+                                  .then(() => load())
+                                  .catch((e) => setError(String(e)));
+                                setContentMenu(null);
+                                setContentMenuAlbumsOpen(false);
+                              }}
+                            >
+                              {folder.name}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                </>
+              ) : null}
             </div>
           ) : null}
 
-          {/* ALBUMS */}
-          {section === "albums" ? (
+          {/* FOLDERS (shown as albums to clients) */}
+          {section === "folders" ? (
             <div className="settings-panel albums-layout">
               <aside className="albums-sidebar">
-                <h3 style={{ fontSize: 14, marginBottom: 12 }}>Albums</h3>
+                <h3 style={{ fontSize: 14, marginBottom: 12 }}>Folders</h3>
                 <p className="hint" style={{ marginBottom: 12 }}>
-                  Albums appear in the client gallery sidebar.
+                  Folders appear as albums in the client gallery sidebar.
                 </p>
                 <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
                   <input
                     type="text"
                     value={newFolderName}
                     onChange={(e) => setNewFolderName(e.target.value)}
-                    placeholder="New album"
+                    placeholder="New folder"
                     maxLength={120}
                     style={{ flex: 1, minWidth: 0 }}
                   />
@@ -300,40 +492,80 @@ export function AdminGalleryPage() {
                         borderBottom: "1px solid var(--bg-divider)",
                       }}
                     >
+                      {editingAdminFolderId === f.id ? (
+                        <input
+                          value={editAdminFolderName}
+                          autoFocus
+                          maxLength={120}
+                          style={{ flex: 1, minWidth: 0, fontSize: 13 }}
+                          onChange={(e) => setEditAdminFolderName(e.target.value)}
+                          onBlur={() => {
+                            const name = editAdminFolderName.trim();
+                            setEditingAdminFolderId(null);
+                            if (name && name !== f.name) {
+                              void renameFolder(gallery.id, f.id, name)
+                                .then(() => load())
+                                .catch((e) => setError(String(e)));
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                            if (e.key === "Escape") {
+                              setEditingAdminFolderId(null);
+                              setEditAdminFolderName(f.name);
+                            }
+                          }}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedAlbumId(f.id);
+                            setAlbumAddMode(false);
+                            setAlbumSelectMode(false);
+                            setAlbumSelectedIds(new Set());
+                          }}
+                          style={{
+                            flex: 1,
+                            textAlign: "left",
+                            fontSize: 13,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            padding: "4px 6px",
+                            margin: "-4px -6px 4px -6px",
+                            border: "none",
+                            background: selectedAlbumId === f.id ? "var(--bg-divider)" : "transparent",
+                            borderRadius: 6,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {f.name}
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={() => {
-                          setSelectedAlbumId(f.id);
-                          setAlbumAddMode(false);
-                          setAlbumSelectMode(false);
-                          setAlbumSelectedIds(new Set());
-                        }}
-                        style={{
-                          flex: 1,
-                          textAlign: "left",
-                          fontSize: 13,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          padding: "4px 6px",
-                          margin: "-4px -6px 4px -6px",
-                          border: "none",
-                          background: selectedAlbumId === f.id ? "var(--bg-divider)" : "transparent",
-                          borderRadius: 6,
-                          cursor: "pointer",
+                        className="btn-ghost"
+                        style={{ padding: "2px 6px", fontSize: 11 }}
+                        title="Rename folder"
+                        disabled={editingAdminFolderId === f.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingAdminFolderId(f.id);
+                          setEditAdminFolderName(f.name);
                         }}
                       >
-                        {f.name}
+                        ✎
                       </button>
-                      <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>{f.image_ids.length}</span>
                       <button
                         type="button"
                         className="btn-ghost"
                         style={{ padding: "2px 6px", fontSize: 11 }}
                         onClick={async (e) => {
                           e.stopPropagation();
-                          if (!confirm(`Delete "${f.name}"?`)) return;
+                          if (!confirm(`Delete folder "${f.name}"?`)) return;
                           await deleteFolder(gallery.id, f.id);
                           if (selectedAlbumId === f.id) setSelectedAlbumId(null);
+                          if (editingAdminFolderId === f.id) setEditingAdminFolderId(null);
                           await load();
                         }}
                       >
@@ -358,7 +590,7 @@ export function AdminGalleryPage() {
                             className="btn-ghost"
                             onClick={() => setAlbumAddMode(false)}
                           >
-                            ← Back to album
+                            ← Back to folder
                           </button>
                           <span style={{ fontWeight: 500 }}>Add photos to “{folder?.name}”</span>
                           {albumSelectedIds.size > 0 ? (
@@ -378,7 +610,7 @@ export function AdminGalleryPage() {
                                   await load();
                                 }}
                               >
-                                Add to album
+                                Add to folder
                               </button>
                               <button
                                 type="button"
@@ -413,9 +645,9 @@ export function AdminGalleryPage() {
                                   });
                                 }}
                               >
-                                <img src={image.thumb_url} alt="" loading="lazy" style={{ width: "100%", display: "block" }} />
+                                <img src={image.thumb_url ?? image.preview_url ?? image.original_url ?? ""} alt="" loading="lazy" style={{ width: "100%", display: "block" }} />
                                 {folder?.image_ids.includes(image.id) ? (
-                                  <span style={{ position: "absolute", top: 8, left: 8, fontSize: 11, background: "var(--accent)", color: "#fff", padding: "2px 6px", borderRadius: 4 }}>In album</span>
+                                  <span style={{ position: "absolute", top: 8, left: 8, fontSize: 11, background: "var(--accent)", color: "#fff", padding: "2px 6px", borderRadius: 4 }}>In folder</span>
                                 ) : (
                                   <div
                                     style={{
@@ -457,9 +689,9 @@ export function AdminGalleryPage() {
                             setAlbumSelectedIds(new Set());
                           }}
                         >
-                          ← All albums
+                          ← All folders
                         </button>
-                        <h3 style={{ margin: 0, fontSize: 16 }}>{folder?.name ?? "Album"}</h3>
+                        <h3 style={{ margin: 0, fontSize: 16 }}>{folder?.name ?? "Folder"}</h3>
                         <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
                           {albumImages.length} photo{albumImages.length !== 1 ? "s" : ""}
                         </span>
@@ -472,7 +704,7 @@ export function AdminGalleryPage() {
                         </button>
                       </div>
                       {albumImages.length === 0 ? (
-                        <p className="hint">No photos in this album yet. Click “Add photos” to add some.</p>
+                        <p className="hint">No photos in this folder yet. Click “Add photos” to add some.</p>
                       ) : (
                         <section className="grid album-grid">
                           {albumImages.map((image) => (
@@ -481,10 +713,10 @@ export function AdminGalleryPage() {
                               className="image-card"
                               style={{ position: "relative" }}
                             >
-                              <img src={image.thumb_url} alt="" loading="lazy" style={{ width: "100%", display: "block" }} />
+                              <img src={image.thumb_url ?? image.preview_url ?? image.original_url ?? ""} alt="" loading="lazy" style={{ width: "100%", display: "block" }} />
                               <button
                                 type="button"
-                                title="Remove from album"
+                                title="Remove from folder"
                                 onClick={async () => {
                                   if (!folder) return;
                                   const next = folder.image_ids.filter((id) => id !== image.id);
@@ -517,7 +749,7 @@ export function AdminGalleryPage() {
                 })() : (
                   <>
                     <p className="hint" style={{ marginBottom: 12 }}>
-                      Click an album in the sidebar to view and edit its photos, or select photos below and add them to an album.
+                      Click a folder in the sidebar to view and edit its photos, or select photos below and add them to a folder.
                     </p>
                     <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
                       <button
@@ -540,7 +772,7 @@ export function AdminGalleryPage() {
                             onChange={(e) => setAddToAlbumId(e.target.value || null)}
                             style={{ minWidth: 140 }}
                           >
-                            <option value="">Add to album…</option>
+                            <option value="">Add to folder…</option>
                             {(adminPayload.admin_folders ?? []).map((f) => (
                               <option key={f.id} value={f.id}>{f.name}</option>
                             ))}
@@ -559,7 +791,7 @@ export function AdminGalleryPage() {
                                 await load();
                               }}
                             >
-                              Add to album
+                              Add to folder
                             </button>
                           ) : null}
                         </>
@@ -584,7 +816,7 @@ export function AdminGalleryPage() {
                               });
                             }}
                           >
-                            <img src={image.thumb_url} alt="" loading="lazy" style={{ width: "100%", display: "block" }} />
+                            <img src={image.thumb_url ?? image.preview_url ?? image.original_url ?? ""} alt="" loading="lazy" style={{ width: "100%", display: "block" }} />
                             {albumSelectMode ? (
                               <div
                                 style={{

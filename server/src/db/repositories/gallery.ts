@@ -132,3 +132,7 @@ export async function setGalleryWatermarkPosition(
 export async function setGalleryDefaultSort(galleryId: string, sort: DefaultSort): Promise<void> {
   await getDb().update(galleries).set({ defaultSort: sort }).where(eq(galleries.id, galleryId));
 }
+
+export async function deleteGalleryById(galleryId: string): Promise<void> {
+  await getDb().delete(galleries).where(eq(galleries.id, galleryId));
+}

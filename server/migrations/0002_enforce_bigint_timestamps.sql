@@ -1,4 +1,4 @@
--- Migrate timestamp columns from integer to bigint to support Date.now() values
+-- Ensure all epoch-millisecond timestamp columns are BIGINT
 
 ALTER TABLE "galleries" ALTER COLUMN "created_at" TYPE bigint USING "created_at"::bigint;
 ALTER TABLE "galleries" ALTER COLUMN "published_at" TYPE bigint USING "published_at"::bigint;

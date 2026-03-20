@@ -18,7 +18,7 @@ export function FolderSidebar(props: {
   return (
     <aside className={`folder-sidebar ${mobileOpen ? "open" : ""}`}>
       <div className="sidebar-head">
-        <h3>My Folders</h3>
+        <h3>My Albums</h3>
         <button className="mobile-close" onClick={() => setMobileOpen(false)}>
           ×
         </button>
@@ -28,7 +28,7 @@ export function FolderSidebar(props: {
         <input
           value={name}
           maxLength={60}
-          placeholder="Create folder"
+          placeholder="Create album"
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
@@ -89,7 +89,6 @@ export function FolderSidebar(props: {
                 {folder.name}
               </button>
             )}
-            <span className="count">{folder.image_ids.length}</span>
             <button
               className="ghost-btn"
               onClick={() => {

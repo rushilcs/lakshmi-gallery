@@ -1,16 +1,21 @@
 import exifr from "exifr";
 import sharp from "sharp";
 import { getGalleryById } from "../../models/gallery.js";
-import { getImageById, updateImageDerivatives } from "../../models/image.js";
+import { getImageById, updateImageDerivatives, updateImageThumbKey } from "../../models/image.js";
 import { readBufferFromStorage, uploadBufferToStorage } from "../../services/s3.js";
 import { applyWatermarkOverlay, createPreview, createThumbnail } from "../../services/watermark.js";
 import { getJobQueue } from "../jobs/queue.js";
 import type { ProcessImageJob } from "../jobs/types.js";
+import { logger } from "../logger.js";
 
 function addSuffix(key: string, suffix: string): string {
   const dot = key.lastIndexOf(".");
   if (dot < 0) return `${key}_${suffix}.jpg`;
   return `${key.slice(0, dot)}_${suffix}.jpg`;
+}
+
+function derivativeKey(galleryId: string, imageId: string, kind: "thumb" | "preview"): string {
+  return `galleries/${galleryId}/${kind}/${imageId}.jpg`;
 }
 
 export async function processImageJob(job: ProcessImageJob): Promise<void> {
@@ -27,10 +32,15 @@ export async function processImageJob(job: ProcessImageJob): Promise<void> {
   const thumb = await createThumbnail(original);
   const preview = await createPreview(original);
   const previewMeta = await sharp(preview).metadata();
-  const thumb_key = addSuffix(image.original_key, "thumb");
-  const preview_key = addSuffix(image.original_key, "preview");
+  const thumb_key = derivativeKey(job.galleryId, job.imageId, "thumb");
+  const preview_key = derivativeKey(job.galleryId, job.imageId, "preview");
 
-  await uploadBufferToStorage({ key: thumb_key, contentType: "image/jpeg", body: thumb });
+  await uploadBufferToStorage({
+    key: thumb_key,
+    contentType: "image/jpeg",
+    body: thumb,
+    cacheControl: "public, max-age=31536000, immutable",
+  });
   await uploadBufferToStorage({ key: preview_key, contentType: "image/jpeg", body: preview });
 
   let taken_at: number | null = null;
@@ -87,4 +97,28 @@ export async function processImageJob(job: ProcessImageJob): Promise<void> {
     galleryId: job.galleryId,
     imageIds: [job.imageId],
   });
+}
+
+export async function regenerateThumbnailJob(job: { imageId: string; galleryId: string }): Promise<void> {
+  const image = await getImageById(job.imageId);
+  if (!image) return;
+  if (image.gallery_id !== job.galleryId) return;
+
+  const original = await readBufferFromStorage(image.original_key);
+  if (!original) {
+    logger.warn("Regenerate thumbnail: original missing", { imageId: job.imageId, key: image.original_key });
+    return;
+  }
+
+  // Generate fresh high-quality thumb directly from original.
+  const thumb = await createThumbnail(original);
+  const thumb_key = derivativeKey(job.galleryId, job.imageId, "thumb");
+  await uploadBufferToStorage({
+    key: thumb_key,
+    contentType: "image/jpeg",
+    body: thumb,
+    cacheControl: "public, max-age=31536000, immutable",
+  });
+  await updateImageThumbKey({ image_id: job.imageId, thumb_key });
+  logger.info("Regenerated thumbnail", { imageId: job.imageId, thumb_key });
 }

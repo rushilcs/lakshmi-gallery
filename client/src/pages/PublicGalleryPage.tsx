@@ -33,6 +33,15 @@ export function PublicGalleryPage() {
       .catch((e) => setError(String(e)));
   }, [share_token, sort]);
 
+  useEffect(() => {
+    if (!payload?.gallery?.title) return;
+    const previousTitle = document.title;
+    document.title = payload.gallery.title;
+    return () => {
+      document.title = previousTitle;
+    };
+  }, [payload?.gallery?.title]);
+
   if (!payload) {
     return (
       <div className="page">

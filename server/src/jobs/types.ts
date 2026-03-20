@@ -1,4 +1,4 @@
-export type JobType = "process_image" | "index_faces";
+export type JobType = "process_image" | "index_faces" | "regenerate_thumbnail";
 
 export interface ProcessImageJob {
   type: "process_image";
@@ -12,7 +12,13 @@ export interface IndexFacesJob {
   imageIds: string[];
 }
 
-export type JobPayload = ProcessImageJob | IndexFacesJob;
+export interface RegenerateThumbnailJob {
+  type: "regenerate_thumbnail";
+  imageId: string;
+  galleryId: string;
+}
+
+export type JobPayload = ProcessImageJob | IndexFacesJob | RegenerateThumbnailJob;
 
 export interface Job {
   id: string;

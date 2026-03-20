@@ -13,6 +13,18 @@
       "when": 1739500000000,
       "tag": "0001_timestamps_to_bigint",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "when": 1739503600000,
+      "tag": "0002_enforce_bigint_timestamps",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "when": 1739507200000,
+      "tag": "0003_add_image_asset_metadata",
+      "breakpoints": true
     }
   ]
 }

@@ -26,7 +26,7 @@ function resolveUploadUrl(url: string): string {
   return url;
 }
 
-function putFile(url: string, file: File, onProgress: (value: number) => void): Promise<void> {
+function putFile(url: string, file: File, contentType: string, onProgress: (value: number) => void): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", resolveUploadUrl(url));
@@ -39,7 +39,7 @@ function putFile(url: string, file: File, onProgress: (value: number) => void): 
       if (xhr.status >= 200 && xhr.status < 300) resolve();
       else reject(new Error(`Upload failed: ${xhr.status}`));
     };
-    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    xhr.setRequestHeader("Content-Type", contentType);
     xhr.send(file);
   });
 }
@@ -94,6 +94,9 @@ export function AdminUploadPage() {
         ]),
       );
       const uploaded: Array<{
+        photo_id: string;
+        original_filename: string;
+        s3_key_original: string;
         original_key: string;
         folder_path: string;
         content_type: string;
@@ -107,7 +110,7 @@ export function AdminUploadPage() {
           [row.relative_path]: { fileName: row.relative_path, progress: 0, status: "uploading" },
         }));
         try {
-          await putFile(row.upload_url, file, (progress) => {
+          await putFile(row.upload_url, file, row.content_type, (progress) => {
             setRows((prev) => ({
               ...prev,
               [row.relative_path]: {
@@ -118,9 +121,12 @@ export function AdminUploadPage() {
             }));
           });
           uploaded.push({
+            photo_id: row.photo_id,
+            original_filename: row.original_filename,
+            s3_key_original: row.s3_key_original ?? row.original_key,
             original_key: row.original_key,
             folder_path: row.folder_path,
-            content_type: file.type || "application/octet-stream",
+            content_type: row.content_type || file.type || "application/octet-stream",
           });
           setRows((prev) => ({
             ...prev,

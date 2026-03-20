@@ -1,5 +1,6 @@
 export {
   createGallery,
+  deleteGalleryById,
   getGalleryById,
   getGalleryByShareToken,
   listGalleries,
